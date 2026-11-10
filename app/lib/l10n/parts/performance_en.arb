@@ -1,0 +1,17 @@
+{
+  "performanceTitle": "Performance",
+  "performanceAuto": "Auto",
+  "performanceFull": "Full",
+  "performanceLight": "Light",
+  "performanceAutoHint": "Adjust default effects for this device",
+  "performanceFullHint": "Keep blur and animation",
+  "performanceLightHint": "Reduce ongoing effects and resource use",
+  "performanceChoiceHint": "Your pet and engine choices take priority",
+  "performanceCooling": "Reducing effects until the device cools",
+  "performanceEffects": "Interface effects",
+  "performanceBlur": "Glass blur",
+  "performanceAnimations": "Interface animation",
+  "performanceSystemMotion": "Also follows the system's remove animations setting",
+  "performanceFollowMode": "Follow the performance mode",
+  "performanceRemoteHint": "Connect to a computer or server to reduce work on this phone"
+}

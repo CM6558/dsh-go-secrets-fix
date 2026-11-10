@@ -1,0 +1,17 @@
+{
+  "performanceTitle": "性能",
+  "performanceAuto": "自动",
+  "performanceFull": "完整",
+  "performanceLight": "轻量",
+  "performanceAutoHint": "按设备调整默认效果",
+  "performanceFullHint": "保留模糊与动效",
+  "performanceLightHint": "减少常驻效果和资源占用",
+  "performanceChoiceHint": "手动选择的宠物和引擎设置优先",
+  "performanceCooling": "正在减少效果，降温后恢复",
+  "performanceEffects": "界面效果",
+  "performanceBlur": "玻璃模糊",
+  "performanceAnimations": "界面动效",
+  "performanceSystemMotion": "同时遵循系统的移除动画设置",
+  "performanceFollowMode": "效果跟随性能模式",
+  "performanceRemoteHint": "推荐连接电脑或服务器，减少本机负担"
+}

@@ -1,0 +1,200 @@
+---
+# dsh-go:managed — the dsh-go app keeps this skill up to date; delete this line to keep your own edits.
+name: dsh-go-plugin
+description: 给 dsh-go 手机 App 写一个本地小插件，在原生界面里出现：输入框上方的胶囊、回复长按菜单里的操作、状态条、原生面板、工具结果卡片，还能朗读、开口即停、显示字幕；写完用自带的检查器检查，装进当前主机的 DSH。用户要给 App 加需要逻辑或数据的东西时先加载它，比如「输入框上面加个按钮，把剪贴板译成英文」「长按消息加个『存到笔记』」「输入框上方显示今天用了多少」「做个面板看我的待办」「这个工具的结果画成卡片」「加个按钮把回复读出来」。Write a small local DSH plugin that shows up natively in the dsh-go app, check it with the bundled checker and install it.
+whenToUse: The user wants to add something of their own to the dsh-go app (手机 App / 原生界面) that needs logic or data. For fixed buttons, layout, theme or hiding things use the dsh-go-ui skill (ui.json) instead.
+---
+
+# 给 dsh-go 写一个本地小插件
+
+插件是一个放在主机上的 npm 包目录：`package.json` 里的 `dshGo` 清单声明 App 里出现什么，`lib/index.js` 在引擎里处理点按、推数据。App 只画声明和 JSON 视图，不执行插件代码。
+
+## 先判断用哪个
+
+| 用户要的 | 做法 |
+|---|---|
+| 固定文字的按钮、顶栏按钮、隐藏元素、主题 | 不写插件，用 dsh-go-ui 技能改 ui.json |
+| 按钮要读剪贴板 / 输入框 / 某条回复，或要算点什么 | 本技能：`composer.actions` / `message.actions` + `on(id)` |
+| 一直看得到的一行数字 | 本技能：`composer.strip` + `strip(id)` |
+| 一整页信息 | 本技能：`panels` + `panel(id)` |
+| 某个工具的结果画成卡片 | 本技能：工具 `output.presentationMeta` 返回 `{ "dsh-go/view": 视图 }`，不需要清单 |
+| 把回复读出来、开口就停、跟读字幕 | 本技能：`capabilities` + `media` / `micro` / `overlays`（见下文「声音与字幕」） |
+
+胶囊、菜单、状态条、面板只在装了 dsh-go 桥接的主机上出现：手机本机引擎有（`/etc/dsh-app/runtime.json` 存在就是）；其他主机只有工具卡。
+
+## 步骤
+
+1. **建目录**（放在 `$DSH_HOME/dsh-go/plugins/` 下，引擎重置时会保留；`DSH_HOME` 默认 `~/.dsh`）：
+   ```sh
+   P="${DSH_HOME:-$HOME/.dsh}/dsh-go/plugins/local-quote"
+   mkdir -p "$(dirname "$P")" && cp -r "${DSH_HOME:-$HOME/.dsh}/skills/dsh-go-plugin/template" "$P"
+   ```
+2. **改名**：`package.json` 的 `name`、`cordis.patch.yml` 的 `name`、`lib/index.js` 的 `name` 三处一致，用 `local-` 开头，小写字母、数字和 `-`。
+3. **写清单**（`package.json` → `dshGo`，见下表），只声明用得到的；`wants` 只要真读的内容。
+4. **写处理**（`lib/index.js`）：一律写在 `ctx.inject(['dshGo'], (ctx) => { … })` 里。
+5. **自查**，改到没有「错误」为止：
+   ```sh
+   node "${DSH_HOME:-$HOME/.dsh}/skills/dsh-go-plugin/kit/bin/check.mjs" "$P" --load
+   ```
+   `--load` 会在隔离环境里加载你的代码：查处理函数在不在、视图函数画出来的视图 App 能不能画。`--json` 给机器读。
+6. **安装**（装上即生效，不用重启）：
+   ```sh
+   dsh plugin --profile web add "$P"
+   ```
+   手机本机引擎用的 profile 是 `web`。装的是指向这个目录的链接：目录不能删。
+7. **改代码之后**：清单（`package.json`）改了会自动重读；`lib/` 里的代码改了，要用户在 App 的「引擎」页重启引擎才生效。
+8. **告诉用户**改了什么、在哪看：胶囊在输入框上方；菜单项在长按助手消息的菜单里，按插件分组；状态条在输入框上方；面板在对话详情页「插件」页签或「全部功能」。第一次点按要读剪贴板 / 输入框 / 消息的按钮时，App 会问用户一次。
+
+卸载：`dsh plugin --profile web remove local-quote`，再删目录。
+
+## 清单（`package.json` → `dshGo`）
+
+```json
+{
+  "v": 1,
+  "title": { "zh": "引用", "en": "Quote" },
+  "icon": "bolt",
+  "wants": ["clipboard"],
+  "contributes": {
+    "composer.actions": [
+      { "id": "summarize", "label": "总结", "effect": { "type": "insert", "text": "总结上面的对话，列三条要点。" } },
+      { "id": "paste-quote", "label": { "zh": "引用剪贴板", "en": "Quote clip" }, "icon": "document" }
+    ],
+    "message.actions": [{ "id": "save", "label": "存进笔记", "icon": "note" }],
+    "composer.strip":   [{ "id": "today", "icon": "chart", "panel": "stats" }],
+    "panels":           [{ "id": "stats", "title": "统计", "icon": "chart", "placement": ["session.tab", "features"] }]
+  }
+}
+```
+
+| 插槽 | 每插件 | 文字上限 | 字段 | 点按 |
+|---|---|---|---|---|
+| `composer.actions` | 2 | `label` 10 字 | `id` `label` `icon?` `effect?` | 有 `effect`：App 直接执行，不写代码；否则调 `on(id)` |
+| `message.actions` | 2 | `label` 12 字 | 同上 | 同上 |
+| `composer.strip` | 1 | `text` 24 字 | `id` `icon?` `text?` `panel?` | `panel` → 打开该面板；否则 `on(id)` |
+| `panels` | 4 | `title` 16 字 | `id` `title` `icon?` `placement?` `view?` | 视图里的按钮 / 行 / 选项 → `actions` |
+
+- `title`、`label`、`text` 写字符串或 `{ "zh": "…", "en": "…" }`；中英文都不能超上限。插件名 `title` ≤ 24 字。
+- `id`：字母数字开头，字母数字和 `_ . -`，≤ 40 字；**整个插件内不能重复**（跨插槽也算）。
+- `wants`：`clipboard`、`draft`（输入框文字）只给胶囊；`message`（被长按的回复正文）只给菜单项。
+- `placement`：`session.tab`（对话详情页，scope 带 sessionId，缺省）、`features`（全部功能）、`chat.panel`（聊天页输入框上方「插件」胶囊打开的弹层，scope 带 sessionId）。
+- 静态 `effect` 只能用 `insert` `command` `open` `link` `toast` `copy`。
+- `icon`：bolt star sparkle heart flag bookmark pin bell clock alarm calendar todo note document folder search code terminal globe chart lightbulb book puzzle robot chat mail translate image camera mic link summary wrench bug travel school home play refresh archive team wallet palette coin money speaker read copy quote share edit write save paste add remove delete clear fork regenerate reply select-text qr download downloads external info warning check done success error question pending running tip list table panel sidebar menu more expand collapse file folder-open workspace storage pdf zip slides article text diff gallery audio music video video-file play-video pause stop replay generate-image generate-video diagram plugin bot agent skill model tool workflow goal plan job automation command trajectory web web-search browser history time today timezone schedule repeat reminder user account group chats mention invite announcement reaction poll notification send community forum feedback wechat qq telegram discord phone computer cloud server power restart retry theme color text-size pet featured badge favorite settings
+
+## 处理（`ctx.dshGo`）
+
+```js
+export const name = 'local-quote'
+export function apply(ctx) {
+  ctx.inject(['dshGo'], (ctx) => {
+    // 胶囊 / 菜单项 / 状态条的点按：(scope, event) → 效果
+    ctx.dshGo.on('paste-quote', (scope, event) => scope.clipboard ? { insert: `> ${scope.clipboard}` } : { toast: '剪贴板里没有文字' })
+
+    // 状态条：推 { text ≤ 24, icon?, tone? }；返回取消函数
+    ctx.dshGo.strip('today', (scope, emit, caps) => {
+      const tick = () => emit({ text: caps.locale.startsWith('en') ? `Today ${count()}` : `今日 ${count()}` })
+      tick()
+      const timer = setInterval(tick, 60_000)
+      return () => clearInterval(timer)
+    })
+
+    // 面板：视图（结构）+ 数据（推完整对象，桥接算差量）+ 视图里点按的处理
+    ctx.dshGo.panel('stats', {
+      view: (scope, caps) => ({ type: 'stack', children: [
+        { type: 'metric', label: '今日', value: { $: 'data.today' } },
+        { type: 'actions', items: [{ label: '清零', action: 'reset' }] },
+      ] }),
+      data: (scope, emit, caps) => { emit({ today: count() }); return () => {} },
+      actions: { reset: (scope, event) => ({ toast: '已清零', patch: { today: 0 } }) },
+    })
+  })
+}
+```
+
+| 参数 | 内容 |
+|---|---|
+| `scope` | `{ sessionId?, turnId?, messageId?, callId? }`；点按时另有声明过的 `clipboard` / `draft` / `message` |
+| `event` | `{ surface, id, action?, value?, locale }`；面板点按：`action` 是视图里的动作 id，`value` 是 args（`options` → `{ value }`，`confirm` → `{ confirmed }`） |
+| `caps` | 视图函数：`{ protocol, app, locale, surfaces, components }`；数据函数：`{ protocol, locale }` |
+
+**返回的效果**（一次 ≤ 4 个，点按后 3 秒内返回才执行）：
+
+| 写法 | 作用 |
+|---|---|
+| `{ insert: '…' }` | 放进输入框（≤ 2000 字），**绝不自动发送** |
+| `{ toast: '…' }` | 一行提示（≤ 40 字） |
+| `{ copy: '…' }` | 复制（≤ 8000 字） |
+| `{ link: 'https://…' }` | 用户确认后浏览器打开，只收 https |
+| `{ open: 'panel:stats' }` / `{ open: '页面 id' }` | 打开本插件面板或 App 页面 |
+| `{ command: 'compact' }` | 在当前对话执行斜杠命令 |
+| `{ refresh: true }` / `{ patch: {…} }` | 面板重取视图 / 合并数据 |
+| 多个键写在一个对象里 | 按顺序都执行，例如 `{ copy: md, toast: '已复制' }` |
+
+**慢活（调模型、联网）用延后效果**：先回 `pending`，App 显示等待；结果 ≤ 60 秒到，只能是 `insert` `copy` `toast` `patch`；每插件同时最多 2 个；`signal` 在取消 / 超时 / 断开时触发，收到就停。
+
+```js
+ctx.dshGo.on('translate', (scope) => ({
+  pending: { label: '正在翻译', timeoutMs: 60_000 },
+  result: async (signal) => ({ insert: await translate(scope.clipboard, signal) }),
+}))
+```
+
+## 视图（面板、工具卡）
+
+一棵 JSON 组件树。任何值都可以写绑定 `{ "$": "data.a.b" }`，从推来的数据里取，取不到显示「—」；工具卡没有数据，直接写值。
+
+| 组件 | 字段 |
+|---|---|
+| `stack` / `row` | `children`（row 窄屏自动折行）；根节点可带 `title` |
+| `text` | `text`，`tone?: muted` |
+| `metric` | `label` `value` `tone?: good\|warn\|bad\|info` `caption?` |
+| `chart` | `kind: bar\|hbar\|line\|donut` `categories` `series: [{ name?, values }]` `unit?` `caption?` |
+| `compare` | `items: [{ title, badge?, rows: [[名称, 值]] }]`（2–4 项） |
+| `steps` | `items: [{ label, status: done\|current\|todo\|failed, detail? }]` |
+| `callout` | `text` `tone?: info\|good\|warn\|bad` |
+| `list` | `items: [{ title, subtitle?, trailing?, icon?, tone?, action? }]`（≤ 50） |
+| `keyValue` | `items: [[名称, 值], …]` 或 `[{ label, value, tone? }]` 或 `{ 名称: 值 }`（≤ 24） |
+| `progress` | `value` `max?`（缺省 100）`label?` `caption?` `tone?` |
+| `table` | `columns: [文字 \| { label, align? }]`（≤ 8）`rows: [[…]]`（≤ 50） |
+| `actions` | `items: [{ label, action, icon?, style?: primary\|plain }]`（≤ 4，至多一个 primary） |
+| `options` | `id` `options: [{ label, value? }]` `multi?` `selected?` |
+| `confirm` | `id` `confirmLabel?` `cancelLabel?` |
+| `image` | `src`：`/dsh-go/v1/…` 同源路径或 ≤ 64 KiB 的 `data:image/…`；`alt?` `aspect?` |
+
+`action` 写动作 id 字符串，或 `{ "id": "open", "args": { … } }`（args ≤ 1 KiB）。上限：面板 32 KiB / 120 个组件 / 8 层；工具卡 8 KiB / 40 个 / 6 层，第 0 期不能点。
+
+工具卡：
+
+```js
+presentationMeta: (args, value) => {
+  try {   // 抛错或返回 undefined / NaN 会让整次工具调用失败
+    const text = JSON.stringify({ type: 'stack', title: `${value.city} · 今天`, children: [{ type: 'metric', label: '气温', value: `${value.temp}°` }] })
+    return text.length < 8000 ? { 'dsh-go/view': JSON.parse(text) } : {}
+  } catch { return {} }
+},
+```
+
+## 声音与字幕（v1.2，可选）
+
+清单加 `"capabilities": ["audio", "voice", "micro", "overlay"]`（用哪几样写哪几样），`contributes` 加 `media: [{ id }]`、`micro: [{ id }]`、`overlays: [{ id, channel }]`（各 ≤ 2，id 和其他贡献不重复）；要用声音的按钮加 `"requires": ["audio"]`。
+
+```js
+ctx.dshGo.on('read', (scope) => [   // 同一 instance：App 当作一个会话
+  { type: 'audio', op: 'play', instance: 'reading', src: 'media:speech', key: 'k1' },
+  { type: 'voice', op: 'start', instance: 'reading' },
+  { type: 'overlay', op: 'show', instance: 'reading', id: 'subtitle' },
+])
+ctx.dshGo.media('speech', async (scope, { key, signal }) => ({ body: wavBuffer, contentType: 'audio/wav' }))   // 整段，≤ 16 MiB，30 秒内
+ctx.dshGo.micro('caption', { data: (scope, emit) => { emit({ text: '读到这里', progress: 0.3 }); return () => {} } })   // 只能 { text ≤ 240 字, progress 0–1 }
+ctx.dshGo.onCapability((scope, { event }) => {})   // audio.ended / voice.speechStart / …；返回值不执行
+```
+
+慢的事（TTS）放在 `media` 里，不放在 `on` 里。App 负责：开口时先停播再通知、问用户能不能听、只在前台、声音结束后自动停听关字幕。没有 TTS 时可以像 `examples/plugins/dsh-go-example-readaloud` 那样合成占位音。
+
+## 规矩
+
+- 不能自定义颜色、字体、尺寸、动画；只有组件和语义色调。观感由 App 决定。
+- 文案短、全角标点；报错像人话（「剪贴板里没有文字」），不写英文异常。
+- 不在视图、清单、代码里放密钥和令牌；读到的剪贴板 / 消息只用于这一次点按。
+- 不在没有点按时做有副作用的事；`insert` 永远不发送。
+- 不要编造字段；不在上面表里的 App 不认识。完整说明在 App 仓库的 `docs/plugins/`。

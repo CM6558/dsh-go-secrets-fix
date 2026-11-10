@@ -1,0 +1,41 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+enum VoiceMode { auto, system, engine }
+
+class VoiceSettingsController extends Notifier<VoiceMode> {
+  static const preferenceKey = 'voice_recognition_mode';
+  late Future<void> _loaded;
+
+  @override
+  VoiceMode build() {
+    _loaded = _load();
+    return VoiceMode.auto;
+  }
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!ref.mounted) return;
+      final stored = prefs.getString(preferenceKey);
+      state = VoiceMode.values.firstWhere((mode) => mode.name == stored, orElse: () => VoiceMode.auto);
+    } catch (_) {
+      // Unreadable preferences: stay on auto for this run.
+    }
+  }
+
+  Future<VoiceMode> ready() async {
+    await _loaded;
+    return ref.mounted ? state : VoiceMode.auto;
+  }
+
+  Future<void> setMode(VoiceMode mode) async {
+    await _loaded;
+    if (!ref.mounted) return;
+    state = mode;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(preferenceKey, mode.name);
+  }
+}
+
+final voiceSettingsProvider = NotifierProvider<VoiceSettingsController, VoiceMode>(VoiceSettingsController.new);

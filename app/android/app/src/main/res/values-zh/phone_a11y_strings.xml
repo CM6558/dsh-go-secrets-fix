@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Strings of the phone-control accessibility service (phone/a11y). Own file so other
+     modules' string edits never collide with it. -->
+<resources>
+    <string name="phone_a11y_label">DSH 手机操控</string>
+    <string name="phone_a11y_description">只在你让 DSH 做手机上的事时工作：读取当前屏幕上的文字（必要时截图），并按你的要求点击、输入、滑动。屏幕内容会发送给你在 DSH 里选择的 DeepSeek 模型。操作时屏幕上方有悬浮条，可以随时暂停、停止或插话；发送、付款、删除这类动作会先问你。DSH 不会代填密码和验证码，不会替你付款，也不会改系统设置和权限。</string>
+    <!-- 收起后的悬浮球（phone/a11y/OverlayBall.kt），读屏用。 -->
+    <string name="overlay_ball_running">DSH 正在操作手机，点按展开</string>
+    <string name="overlay_ball_paused">已暂停，点按展开</string>
+    <string name="overlay_ball_stopped">已停止</string>
+    <string name="overlay_collapse">收起</string>
+</resources>

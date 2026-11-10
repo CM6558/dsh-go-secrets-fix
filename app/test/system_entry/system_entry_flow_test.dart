@@ -1,0 +1,281 @@
+// The ways in from the rest of the phone, end to end through the real chat
+// screen: the share sheet, launcher shortcuts, the tile and opened files.
+// The native sides are faked the way SharePlugin.kt / ShortcutsPlugin.kt
+// behave: arrivals held until Dart says `ready`, then pushed as calls.
+
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:dsh_app/links/app_links.dart';
+import 'package:dsh_app/state/chat_state.dart';
+import 'package:dsh_app/state/hosts_state.dart';
+import 'package:dsh_app/state/sessions_state.dart';
+import 'package:dsh_app/state/voice_state.dart';
+import 'package:dsh_app/ui/chat/chat_screen.dart';
+import 'package:dsh_app/ui/chat/composer.dart';
+import 'package:dsh_app/ui/chat/widgets/attachments.dart';
+import 'package:dsh_app/ui/shell/system_entry_host.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../chat/support/composer_fakes.dart';
+import '../chat/support/harness.dart';
+
+/// A native plugin: holds pushes until `ready`, answers `setRecent`.
+class _Native {
+  _Native(this.tester, String channel, this.method) : channel = MethodChannel(channel) {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(this.channel, (call) async {
+      switch (call.method) {
+        case 'ready':
+          _ready = true;
+          final held = List.of(_held);
+          _held.clear();
+          Future<void>.microtask(() async {
+            for (final args in held) {
+              await _send(args);
+            }
+          });
+          return true;
+        case 'setRecent':
+          recents.add(call.arguments);
+          return true;
+      }
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(this.channel, null));
+  }
+
+  final WidgetTester tester;
+  final MethodChannel channel;
+  final String method;
+  final _held = <Map<String, Object?>>[];
+  final recents = <Object?>[];
+  bool _ready = false;
+
+  Future<void> push(Map<String, Object?> args) async {
+    if (!_ready) {
+      _held.add(args);
+      return;
+    }
+    await _send(args);
+  }
+
+  Future<void> _send(Map<String, Object?> args) => tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+    channel.name,
+    const StandardMethodCodec().encodeMethodCall(MethodCall(method, args)),
+    (_) {},
+  );
+}
+
+/// The home shell's stack, without the rest of the shell.
+class _Shell extends StatelessWidget {
+  const _Shell();
+
+  @override
+  Widget build(BuildContext context) =>
+      const Stack(fit: StackFit.expand, children: [LinkHost(), SystemEntryHost(), ChatScreen()]);
+}
+
+late _Native _shares;
+late _Native _entries;
+late FakeVoiceBridge _voice;
+
+Future<ProviderContainer> _pump(WidgetTester tester, ChatHarness harness) async {
+  usePhoneView(tester);
+  mockClipboard(tester);
+  await tester.pumpWidget(
+    testApp(const _Shell(), overrides: [...harness.overrides, voiceBridgeProvider.overrideWithValue(_voice)]),
+  );
+  await pumpFrames(tester);
+  return ProviderScope.containerOf(tester.element(find.byType(ChatScreen)));
+}
+
+/// Real file reads finish only outside the fake clock: alternate both.
+Future<void> _settle(WidgetTester tester, bool Function() done) async {
+  for (var i = 0; i < 100 && !done(); i++) {
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  await pumpFrames(tester, 4);
+  expect(done(), isTrue);
+}
+
+String _composerText(WidgetTester tester) => tester
+    .widget<TextField>(find.descendant(of: find.byType(Composer), matching: find.byType(TextField)))
+    .controller!
+    .text;
+
+bool _composerFocused(WidgetTester tester) => tester
+    .widget<TextField>(find.descendant(of: find.byType(Composer), matching: find.byType(TextField)))
+    .focusNode!
+    .hasFocus;
+
+List<String> _tray(WidgetTester tester) {
+  final tray = find.byType(ComposerTray);
+  if (tray.evaluate().isEmpty) return const [];
+  return [for (final a in tester.widget<ComposerTray>(tray).items) a.name];
+}
+
+Future<void> _unmount(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox());
+  await tester.pump(const Duration(milliseconds: 500));
+}
+
+void main() {
+  late Directory dir;
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    dir = Directory.systemTemp.createTempSync('dsh-share');
+  });
+  tearDown(() {
+    if (dir.existsSync()) dir.deleteSync(recursive: true);
+  });
+
+  void natives(WidgetTester tester) {
+    _shares = _Native(tester, 'dsh/share', 'share');
+    _entries = _Native(tester, 'dsh/shortcuts', 'entry');
+    _voice = FakeVoiceBridge();
+  }
+
+  File cached(String name, List<int> bytes) {
+    final slot = Directory('${dir.path}/slot-$name')..createSync();
+    return File('${slot.path}/$name')..writeAsBytesSync(bytes);
+  }
+
+  testWidgets('a share opens 新对话 with its text and files in the composer, not sent', (tester) async {
+    natives(tester);
+    final image = cached('IMG_1.png', tinyPng);
+    final pdf = cached('报价单.pdf', utf8.encode('%PDF-1.7'));
+    final harness = ChatHarness(session: 's1', states: {'s1': const ChatState(loading: false)});
+    final container = await _pump(tester, harness);
+    expect(container.read(currentSessionProvider), 's1');
+
+    await _shares.push({
+      'text': '帮我看看这份报价',
+      'files': [
+        {'path': image.path, 'name': 'IMG_1.png', 'mime': 'image/png'},
+        {'path': pdf.path, 'name': '报价单.pdf', 'mime': 'application/pdf'},
+      ],
+      'skipped': [],
+    });
+    await _settle(tester, () => _tray(tester).isNotEmpty);
+
+    expect(container.read(currentSessionProvider), isNull);
+    expect(_composerText(tester), '帮我看看这份报价');
+    expect(_tray(tester), ['IMG_1.png', '报价单.pdf']);
+    expect(_composerFocused(tester), isTrue);
+    expect(harness.controllers['s1']!.sent, isEmpty);
+    // The cached copies are gone; the bytes live in the draft.
+    expect(image.existsSync(), isFalse);
+    expect(pdf.existsSync(), isFalse);
+    await _unmount(tester);
+  });
+
+  testWidgets('a share joins what the new chat already holds and says what did not fit', (tester) async {
+    natives(tester);
+    final container = await _pump(tester, ChatHarness());
+    final field = find.descendant(of: find.byType(Composer), matching: find.byType(TextField));
+    await tester.enterText(field, '先写好的');
+    await tester.pump();
+
+    await _shares.push({
+      'text': '分享来的一段话',
+      'skipped': [
+        {'name': '电影.mp4', 'reason': 'too_large'},
+      ],
+    });
+    await _settle(tester, () => _composerText(tester) != '先写好的');
+    expect(container.read(currentSessionProvider), isNull);
+    expect(_composerText(tester), '先写好的\n\n分享来的一段话');
+    expect(find.text('「电影.mp4」太大，未添加'), findsOneWidget);
+    await _unmount(tester);
+  });
+
+  testWidgets('a share that arrives before the app is up lands once it is', (tester) async {
+    natives(tester);
+    await _shares.push({'text': '冷启动时分享的'});
+    await _pump(tester, ChatHarness(session: 's1'));
+    await _settle(tester, () => _composerText(tester).isNotEmpty);
+    expect(_composerText(tester), '冷启动时分享的');
+    await _unmount(tester);
+  });
+
+  testWidgets('a lone share-code file goes to the importer, not to a chat', (tester) async {
+    natives(tester);
+    final code = cached('读书笔记.dshgo', utf8.encode('{"dshgo":1}'));
+    final container = await _pump(tester, ChatHarness(session: 's1'));
+    final opened = <Uri>[];
+    container.read(linkRouterProvider).registerFileHandler('dshgo', (uri) async {
+      opened.add(uri);
+      return true;
+    });
+    await _shares.push({
+      'files': [
+        {'path': code.path, 'name': '读书笔记.dshgo', 'mime': 'application/octet-stream'},
+      ],
+    });
+    await _settle(tester, () => opened.isNotEmpty);
+    expect(opened.single.toFilePath(), code.path);
+    expect(container.read(currentSessionProvider), 's1');
+    expect(code.existsSync(), isTrue);
+    await _unmount(tester);
+  });
+
+  testWidgets('新对话 from the launcher or the tile: an empty, focused composer', (tester) async {
+    natives(tester);
+    final container = await _pump(tester, ChatHarness(session: 's1', states: {'s1': const ChatState(loading: false)}));
+    await _entries.push({'kind': 'new'});
+    await pumpFrames(tester);
+    expect(container.read(currentSessionProvider), isNull);
+    expect(_composerText(tester), isEmpty);
+    expect(_composerFocused(tester), isTrue);
+    expect(_voice.calls, isEmpty);
+    await _unmount(tester);
+  });
+
+  testWidgets('语音输入 opens 新对话 listening', (tester) async {
+    natives(tester);
+    final container = await _pump(tester, ChatHarness(session: 's1', states: {'s1': const ChatState(loading: false)}));
+    await _entries.push({'kind': 'voice'});
+    await pumpFrames(tester);
+    expect(container.read(currentSessionProvider), isNull);
+    expect(_voice.calls, containsAllInOrder(['permission', 'recognizer']));
+    expect(tester.widget<Composer>(find.byType(Composer)).voice!.active, isTrue);
+    await _unmount(tester);
+  });
+
+  testWidgets('a recent conversation opens on its host', (tester) async {
+    natives(tester);
+    final container = await _pump(tester, ChatHarness());
+    await _entries.push({'kind': 'chat', 'sessionId': 's2', 'host': HostRef.local.encode()});
+    await pumpFrames(tester);
+    expect(container.read(activeHostProvider), HostRef.local);
+    expect(container.read(currentSessionProvider), 's2');
+    await _unmount(tester);
+  });
+
+  testWidgets('a file opened with the app that nothing claims is attached to 新对话', (tester) async {
+    natives(tester);
+    final notes = cached('notes.md', utf8.encode('# 会议记录'));
+    final container = await _pump(tester, ChatHarness(session: 's1'));
+    container.read(appLinksProvider).add(Uri.file(notes.path));
+    await _settle(tester, () => _tray(tester).isNotEmpty);
+    expect(container.read(currentSessionProvider), isNull);
+    expect(_tray(tester), ['notes.md']);
+    await _unmount(tester);
+  });
+
+  testWidgets('the launcher gets the latest conversations once connected', (tester) async {
+    natives(tester);
+    await _pump(tester, ChatHarness());
+    await pumpFrames(tester);
+    expect(_entries.recents, [
+      {'items': <Object?>[]},
+    ]);
+    await _unmount(tester);
+  });
+}

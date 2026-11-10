@@ -1,0 +1,183 @@
+{
+  "mediaGenerateTile": "Create",
+  "mediaAiGenerated": "AI-generated",
+  "mediaCostEstimate": "About {amount}",
+  "@mediaCostEstimate": {
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
+  "mediaSavedCount": "Saved {count} to Photos",
+  "@mediaSavedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mediaRegenerate": "Regenerate",
+  "mediaCopyPrompt": "Copy prompt",
+  "mediaFileGone": "File is gone",
+  "mediaKindImage": "Image",
+  "mediaKindVideo": "Video",
+  "mediaTitleImage": "New image",
+  "mediaTitleVideo": "New video",
+  "mediaOpenElsewhere": "Open in another app",
+  "mediaShowInFiles": "Show in files",
+  "mediaGenerating": "Generating",
+  "mediaGeneratingProgress": "Generating · {progress}",
+  "@mediaGeneratingProgress": {
+    "placeholders": {
+      "progress": {
+        "type": "String"
+      }
+    }
+  },
+  "mediaCancelled": "Cancelled",
+  "mediaNotGenerated": "Not created",
+  "mediaPartial": "{done} of {total}",
+  "@mediaPartial": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "mediaCount": "{count, plural, =1{1 image} other{{count} images}}",
+  "@mediaCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mediaSeconds": "{seconds} s",
+  "@mediaSeconds": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "mediaImageOf": "Image {index} of {count}",
+  "@mediaImageOf": {
+    "placeholders": {
+      "index": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mediaPageOf": "{index} / {count}",
+  "@mediaPageOf": {
+    "placeholders": {
+      "index": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mediaErrorPolicyInput": "The description didn't pass content review",
+  "mediaErrorPolicyOutput": "The result didn't pass content review",
+  "mediaErrorAuth": "Service not authorized",
+  "mediaErrorBalance": "Insufficient balance",
+  "mediaErrorQuota": "Today's limit is used up",
+  "mediaErrorUnavailable": "Service unavailable for now",
+  "mediaErrorExpired": "The result expired",
+  "mediaErrorGeneric": "Couldn't create it",
+  "mediaVary": "Vary",
+  "mediaEdit": "Edit",
+  "mediaRevise": "Revise",
+  "mediaUpscale": "Upscale",
+  "mediaMakeVideo": "Make a video",
+  "mediaDetailModel": "Model",
+  "mediaDetailSize": "Size",
+  "mediaDetailCost": "Cost",
+  "mediaDetailProvenance": "Provenance",
+  "mediaDetailFile": "File",
+  "mediaOriginalPrompt": "Original: {text}",
+  "@mediaOriginalPrompt": {
+    "placeholders": {
+      "text": {
+        "type": "String"
+      }
+    }
+  },
+  "mediaProvenanceC2pa": "C2PA",
+  "mediaProvenanceImplicit": "Embedded",
+  "mediaProvenanceVisible": "Visible mark",
+  "mediaModeExit": "Leave create mode",
+  "mediaModeLabel": "Create settings: {summary}",
+  "@mediaModeLabel": {
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "mediaParamModel": "Model",
+  "mediaParamAspect": "Aspect",
+  "mediaParamCount": "Number",
+  "mediaParamQuality": "Quality",
+  "mediaParamDuration": "Length",
+  "mediaQualityAuto": "Auto",
+  "mediaQualityStandard": "Standard",
+  "mediaQualityHigh": "HD",
+  "mediaQuality4k": "4K",
+  "mediaQualityLevelLow": "Low",
+  "mediaQualityLevelMedium": "Medium",
+  "mediaQualityLevelHigh": "High",
+  "mediaModelPick": "Choose",
+  "mediaPickModelFirst": "Choose a model first",
+  "mediaPricePerImage": "{price} / image",
+  "@mediaPricePerImage": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "mediaPricePerSecond": "{price} / s",
+  "@mediaPricePerSecond": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "mediaManageModels": "Manage",
+  "mediaHintImage": "Describe the picture…",
+  "mediaHintVideo": "Describe the scene and the shot…",
+  "mediaHintEdit": "How should it change…",
+  "mediaFirstFrame": "First",
+  "mediaLastFrame": "Last",
+  "mediaNoLastFrame": "This model takes no last frame",
+  "mediaNoRefs": "This model takes no reference images",
+  "mediaRefLimit": "Up to {count} reference images",
+  "@mediaRefLimit": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mediaNoDescription": "Describe it first",
+  "mediaDescriptionTooLong": "Too long to generate. Shorten the description",
+  "mediaInstallTitle": "Images and video",
+  "mediaInstallBody": "This host has no image and video plugin yet",
+  "mediaInstallAction": "Install on this host",
+  "mediaUnavailableTitle": "Generation mode unavailable",
+  "mediaUnavailableBody": "The image and video plugin on this host isn't compatible. You can still describe what you want in chat.",
+  "mediaUnavailableAction": "Manage plugins",
+  "mediaSettingsTitle": "Images and video",
+  "searchKwMediaGeneration": "image generation,text to image,video generation,AI art,generate images,generate video"
+}

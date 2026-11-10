@@ -1,0 +1,208 @@
+// 「保存到相册」: pictures keep their own bytes when a gallery takes them
+// (PNG, JPEG, GIF, WebP) and become PNG otherwise; they are named after
+// what the conversation calls them, with the right extension; `dsh/media`
+// gets the bytes, and the person gets 「已保存到相册」 or why not.
+
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:dsh_app/media/gallery.dart';
+import 'package:dsh_app/ui/chat/widgets/image_actions.dart';
+import 'package:dsh_app/ui/theme/app_icons.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+import '../chat/support/harness.dart';
+
+final _png = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+);
+
+/// A 1×1 red 24-bit BMP: decodable, but not something a gallery takes.
+final _bmp = Uint8List.fromList([
+  0x42, 0x4D, 58, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0, // file header
+  40, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 24, 0, // info header
+  0, 0, 0, 0, 4, 0, 0, 0, 0x13, 0x0B, 0, 0, 0x13, 0x0B, 0, 0, //
+  0, 0, 0, 0, 0, 0, 0, 0, //
+  0x00, 0x00, 0xFF, 0x00, // one pixel (B, G, R) and the row padding
+]);
+
+const _channel = MethodChannel('dsh/media');
+
+/// Records `dsh/media` calls; answers with [answer].
+List<MethodCall> _mockMedia(Future<Object?> Function(MethodCall call) answer) {
+  final calls = <MethodCall>[];
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(_channel, (call) {
+    calls.add(call);
+    return answer(call);
+  });
+  addTearDown(
+    () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(_channel, null),
+  );
+  return calls;
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('galleryFileName', () {
+    final now = DateTime(2026, 10, 24, 15, 30, 12);
+
+    test('keeps the conversation\'s name with the type\'s extension', () {
+      expect(galleryFileName('chart.png', 'image/png'), 'chart.png');
+      expect(galleryFileName('/root/workspace/out/plot.final.jpeg', 'image/jpeg'), 'plot.final.jpg');
+      expect(galleryFileName('scan.bmp', 'image/png'), 'scan.png');
+      expect(galleryFileName('a:b*c?.webp', 'image/webp'), 'a_b_c_.webp');
+    });
+
+    test('nothing worth keeping: a dated name', () {
+      expect(galleryFileName(null, 'image/png', now: now), 'DSH_20261024_153012.png');
+      expect(galleryFileName('图片', 'image/gif', now: now), 'DSH_20261024_153012.gif');
+      expect(galleryFileName('  ', 'image/jpeg', now: now), 'DSH_20261024_153012.jpg');
+    });
+  });
+
+  group('galleryImage', () {
+    test('a picture a gallery takes stays as it is', () async {
+      final image = await galleryImage(_png);
+      expect(image.mime, 'image/png');
+      expect(identical(image.bytes, _png), isTrue);
+    });
+
+    test('anything else Flutter can read becomes PNG', () async {
+      final image = await galleryImage(_bmp);
+      expect(image.mime, 'image/png');
+      expect(image.bytes.sublist(0, 4), [0x89, 0x50, 0x4E, 0x47]);
+    });
+
+    test('not a picture: unsupported', () async {
+      await expectLater(
+        galleryImage(Uint8List.fromList(utf8.encode('<svg/>'))),
+        throwsA(isA<GallerySaveException>().having((e) => e.code, 'code', 'unsupported')),
+      );
+    });
+  });
+
+  group('imageProviderBytes', () {
+    test('memory, resized and file images give their stored bytes', () async {
+      expect(await imageProviderBytes(MemoryImage(_png)), _png);
+      expect(await imageProviderBytes(ResizeImage(MemoryImage(_png), width: 10)), _png);
+      final dir = await Directory.systemTemp.createTemp('gallery_test');
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}/a.png')..writeAsBytesSync(_png);
+      expect(await imageProviderBytes(FileImage(file)), _png);
+    });
+
+    test('web images are downloaded again; a failed one says so', () async {
+      final ok = MockClient((request) async {
+        expect(request.headers['Referer'], 'https://example.com/');
+        return http.Response.bytes(_png, 200);
+      });
+      expect(
+        await imageProviderBytes(
+          const NetworkImage('https://example.com/a.png', headers: {'Referer': 'https://example.com/'}),
+          client: ok,
+        ),
+        _png,
+      );
+      final missing = MockClient((_) async => http.Response('', 404));
+      await expectLater(
+        imageProviderBytes(const NetworkImage('https://example.com/b.png'), client: missing),
+        throwsA(isA<GallerySaveException>().having((e) => e.code, 'code', 'download')),
+      );
+    });
+  });
+
+  group('saveToGallery', () {
+    test('sends the bytes, the name and the type; returns the place', () async {
+      final calls = _mockMedia((_) async => 'Pictures/DSH Go/chart.png');
+      final where = await saveToGallery(const MediaChannel(), _png, name: 'chart.png');
+      expect(where, 'Pictures/DSH Go/chart.png');
+      expect(calls.single.method, 'saveImage');
+      final args = calls.single.arguments as Map;
+      expect(args['name'], 'chart.png');
+      expect(args['mime'], 'image/png');
+      expect(args['bytes'], _png);
+    });
+
+    test('refused storage comes back as permission', () async {
+      _mockMedia((_) async => throw PlatformException(code: 'permission'));
+      await expectLater(
+        saveToGallery(const MediaChannel(), _png, name: 'a.png'),
+        throwsA(isA<GallerySaveException>().having((e) => e.code, 'code', 'permission')),
+      );
+    });
+  });
+
+  group('toasts', () {
+    Future<void> pumpButton(WidgetTester tester) async {
+      usePhoneView(tester);
+      await tester.pumpWidget(
+        testApp(
+          Scaffold(
+            body: Center(
+              child: GallerySaveButton(load: () async => _png, name: 'chart.png'),
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('saved: 已保存到相册, and the key shows a tick for a moment', (tester) async {
+      _mockMedia((_) async => 'Pictures/DSH Go/chart.png');
+      await pumpButton(tester);
+      await tester.tap(find.byTooltip('保存到相册'));
+      await pumpFrames(tester, 2);
+      expect(find.text('已保存到相册'), findsOneWidget);
+      expect(find.byIcon(AppIcons.done), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.byIcon(AppIcons.save), findsOneWidget);
+    });
+
+    testWidgets('refused storage: the reason and 去设置', (tester) async {
+      final calls = _mockMedia((call) async {
+        if (call.method == 'openSettings') return true;
+        throw PlatformException(code: 'permission');
+      });
+      await pumpButton(tester);
+      await tester.tap(find.byTooltip('保存到相册'));
+      await pumpFrames(tester, 2);
+      expect(find.text('没有存储权限，未能保存'), findsOneWidget);
+      expect(find.byIcon(AppIcons.done), findsNothing);
+      await pumpFrames(tester);
+      await tester.tap(find.text('去设置'));
+      await tester.pump();
+      expect([for (final c in calls) c.method], ['saveImage', 'openSettings']);
+    });
+
+    testWidgets('long-press menu: save goes through the same path', (tester) async {
+      final calls = _mockMedia((_) async => 'Pictures/DSH Go/chart.png');
+      usePhoneView(tester);
+      await tester.pumpWidget(
+        testApp(
+          overrides: [mediaChannelProvider.overrideWithValue(const MediaChannel())],
+          Scaffold(
+            body: Builder(
+              builder: (context) => Center(
+                child: TextButton(
+                  onPressed: () =>
+                      showImageActions(context, image: MemoryImage(_png), load: () async => _png, name: 'chart.png'),
+                  child: const Text('长按'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('长按'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('保存到相册'));
+      await pumpFrames(tester);
+      expect(calls.single.method, 'saveImage');
+      expect(find.text('已保存到相册'), findsOneWidget);
+    });
+  });
+}

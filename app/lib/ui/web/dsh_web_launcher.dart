@@ -1,0 +1,91 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../l10n/l10n.dart';
+import '../../remote/ssh/ssh_link.dart';
+import '../../state/connection_state.dart';
+import '../../state/hosts_state.dart';
+import '../../state/settings_state.dart';
+import '../../state/ui_mode_state.dart';
+import 'local_web_screen.dart';
+import 'web_target.dart';
+import 'web_view_page.dart';
+
+/// Where the active host's DSH Web can be opened from.
+sealed class DshWebAccess {
+  const DshWebAccess();
+}
+
+/// 本机: the on-device engine's `dsh web` ([LocalWebScreen] handles a
+/// stopped engine itself).
+final class LocalDshWeb extends DshWebAccess {
+  const LocalDshWeb();
+}
+
+/// An SSH host: the remote `dsh web` through the app's local forward.
+///
+/// DSH's browser fence accepts any loopback Host, so the WebView can talk to
+/// `127.0.0.1:<forward port>` directly; the launch token logs it in.
+final class SshDshWeb extends DshWebAccess {
+  const SshDshWeb(this.url, this.hostName);
+  final Uri url;
+  final String hostName;
+}
+
+/// No web page for this host right now; [reason] says why.
+final class NoDshWeb extends DshWebAccess {
+  const NoDshWeb(this.reason);
+  final String reason;
+}
+
+/// The active host's DSH Web, if it has one the app can reach.
+final dshWebAccessProvider = Provider.autoDispose<DshWebAccess>((ref) {
+  final host = ref.watch(activeHostProvider);
+  switch (host.kind) {
+    case HostKind.local:
+      return const LocalDshWeb();
+    case HostKind.relay:
+      return NoDshWeb(appL10n.webRelayUnavailable);
+    case HostKind.ssh:
+      // Rebuild once the link connects (or reconnects to a new process).
+      ref.watch(hostLinkStatusProvider(host));
+      final link = ref.watch(hostLinkProvider(host));
+      final name = ref.watch(hostNameProvider(host)) ?? appL10n.webSshHost;
+      final port = link is SshHostLink ? link.localPort : null;
+      final token = link is SshHostLink ? link.endpoint?.token : null;
+      if (port == null || token == null) {
+        return NoDshWeb(appL10n.webConnectHostFirst(name));
+      }
+      return SshDshWeb(localWebUri('http://127.0.0.1:$port', token), name);
+  }
+});
+
+/// Opens the active host's official DSH Web, landing on [target]. In
+/// 网页模式 the home page itself goes there (no second page on top).
+void openDshWeb(BuildContext context, WidgetRef ref, {DshWebTarget target = const DshWebTarget()}) {
+  if (ref.read(uiModeProvider).web) {
+    ref.read(webOpenProvider.notifier).request(target);
+    return;
+  }
+  final Widget page;
+  switch (ref.read(dshWebAccessProvider)) {
+    case LocalDshWeb():
+      page = LocalWebScreen(target: target);
+    case SshDshWeb(:final url, :final hostName):
+      page = WebViewPage(
+        url: url,
+        title: context.l10n.webTitle,
+        subtitle: hostName,
+        externalDisabledReason: context.l10n.webSshAppOnly,
+        // Android suspends the page in the background and its socket drops.
+        reloadAfterBackground: const Duration(seconds: 60),
+        dshWeb: true,
+        phoneLayout: ref.read(settingsProvider).webPhoneLayout,
+        openTarget: target,
+      );
+    case NoDshWeb(:final reason):
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(reason)));
+      return;
+  }
+  Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
+}

@@ -1,0 +1,26 @@
+import '../../../l10n/l10n.dart';
+
+/// Codes DSH (0.2.1-rc.4+) answers before sending anything when the model
+/// itself can't be served: the official model listing says it needs a newer
+/// DSH (`CLIENT_UPGRADE_REQUIRED`), or this DSH doesn't know it
+/// (`MODEL_UNSUPPORTED`). Sending again can't help; another model or a
+/// newer engine can.
+const modelRefusalCodes = {'CLIENT_UPGRADE_REQUIRED', 'MODEL_UNSUPPORTED'};
+
+/// 一轮出错时说明行上的短句,按错误码给;后端原文放在点开的详情里。
+String turnFailureText(String? code) => switch (code) {
+  'AUTH' || 'INVALID_CREDENTIAL' => appL10n.chatErrApiKey,
+  'QUOTA' => appL10n.chatErrBalance,
+  'ACCOUNT_QUOTA' => appL10n.chatErrAccountQuota,
+  'RATE_LIMIT' => appL10n.chatErrRateLimit,
+  'CONTEXT_WINDOW_EXCEEDED' => appL10n.chatErrContextLength,
+  'SERVER' => appL10n.chatErrModelUnavailable,
+  final value? when RegExp(r'^HTTP_5\d\d$').hasMatch(value) => appL10n.chatErrModelUnavailable,
+  'TIMEOUT' => appL10n.chatErrModelTimeout,
+  'TRANSPORT' => appL10n.chatErrModelConnection,
+  'EMPTY_RESPONSE' => appL10n.chatErrModelEmpty,
+  // The engine is on the phone (updated with the app) or on the remote host.
+  'CLIENT_UPGRADE_REQUIRED' => appL10n.chatErrEngineOutdated,
+  'MODEL_UNSUPPORTED' => appL10n.chatErrModelUnsupported,
+  _ => appL10n.chatErrTurn,
+};

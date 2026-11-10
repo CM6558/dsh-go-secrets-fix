@@ -1,0 +1,13 @@
+{
+  "@@locale": "zh",
+  "phoneTaskResultReady": "任务完成 · 查看结果",
+  "phoneTaskEndedResult": "任务已结束 · 查看结果",
+  "phoneBackgroundGuideTitle": "后台确认与返回",
+  "phoneBackgroundGuideSubtitle": "让确认卡和任务结果及时出现",
+  "phoneBackgroundGuideBody": "需要你确认时，会显示 DSH Go 卡片。卡片不可用时会尝试通知或回到 App。请在系统设置中允许手机操控通知和弹出提醒。",
+  "phoneBackgroundOemHint": "在 DSH Go 的系统权限页检查「后台弹出界面」（若提供）。允许后可改善自动返回；菜单名称随系统版本变化。",
+  "phoneBackgroundReturnHint": "如果任务完成后没有自动返回，可点通知「任务完成 · 查看结果」。系统关闭通知或限制后台弹出时，可能需要手动打开 DSH Go。",
+  "phoneBackgroundGotIt": "知道了",
+  "phoneBackgroundOpenSettings": "打开系统设置",
+  "phoneBackgroundNotificationBlocked": "请允许手机操控通知的弹出提醒"
+}

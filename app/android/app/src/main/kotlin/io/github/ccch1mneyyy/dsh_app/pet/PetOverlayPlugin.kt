@@ -1,0 +1,126 @@
+package io.github.ccch1mneyyy.dsh_app.pet
+
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+
+/**
+ * MethodChannel `dsh/pet_overlay` (Dart: `lib/pets/overlay_channel.dart`).
+ *
+ * Dart → here:
+ * - `push {state, tier, bubble?: {id, kind, text, title?, host, sessionId, untilMs}, sessionId?, host?,
+ *   active, foreground, packId, size}`: the state PetMood reduced; nothing is reduced again here
+ *   (`foreground` is read from the activity lifecycle instead);
+ * - `setEnabled {enabled}`, `setAlwaysShow {on}`, `unsnooze` → status;
+ * - `status` → status; `permissionStatus` → status after adding a test window (the real check);
+ * - `requestPermission` → bool: opens 「显示在其他应用上层」 for this app;
+ * - `openAppDetails` → bool: the app's system info page (restricted settings, vendor switches).
+ *
+ * Here → Dart: `status {…}` when it changes; `openSettings` after 「宠物设置」 in the pet's menu.
+ *
+ * Status: `{enabled, alwaysShow, permission: accessibility|granted|blocked|denied, canDraw,
+ * accessibility, snoozed, showing, sdk, manufacturer}`.
+ */
+class PetOverlayPlugin : FlutterPlugin, ActivityAware {
+    private lateinit var context: Context
+    private lateinit var channel: MethodChannel
+    private var activity: Activity? = null
+
+    private var engineBinding: FlutterPlugin.FlutterPluginBinding? = null
+    private var producerToken: Long? = null
+
+    override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        context = binding.applicationContext
+        if (::channel.isInitialized) channel.setMethodCallHandler(null)
+        engineBinding = binding
+        val currentChannel = MethodChannel(binding.binaryMessenger, CHANNEL)
+        channel = currentChannel
+        val assets = binding.flutterAssets
+        PetOverlay.init(context) { path -> assets.getAssetFilePathByName(path) }
+        var token = 0L
+        token = PetOverlay.attachProducer(object : PetOverlay.Listener {
+            override fun onStatus(status: Map<String, Any?>) {
+                if (PetOverlay.ownsProducer(token)) currentChannel.invokeMethod("status", status)
+            }
+
+            override fun onOpenSettings() {
+                if (PetOverlay.ownsProducer(token)) currentChannel.invokeMethod("openSettings", null)
+            }
+        })
+        producerToken = token
+        currentChannel.setMethodCallHandler { call, result ->
+            if (!PetOverlay.ownsProducer(token)) {
+                result.error("overlay_detached", "Pet overlay engine detached", null)
+            } else {
+                onMethodCall(call, result)
+            }
+        }
+    }
+
+    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        if (engineBinding !== binding) return
+        channel.setMethodCallHandler(null)
+        producerToken?.let(PetOverlay::detachProducer)
+        producerToken = null
+        engineBinding = null
+        activity = null
+    }
+
+    private fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "push" -> {
+                (call.arguments as? Map<*, *>)?.let(PetOverlay::push)
+                result.success(null)
+            }
+            "setEnabled" -> result.success(PetOverlay.setEnabled(call.argument<Boolean>("enabled") == true))
+            "setAlwaysShow" -> result.success(PetOverlay.setAlwaysShow(call.argument<Boolean>("on") == true))
+            "unsnooze" -> result.success(PetOverlay.unsnooze())
+            "status" -> result.success(PetOverlay.status())
+            "permissionStatus" -> result.success(PetOverlay.permissionStatus())
+            "requestPermission" -> result.success(
+                start(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))) || openAppDetails(),
+            )
+            "openAppDetails" -> result.success(openAppDetails())
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun openAppDetails() =
+        start(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+
+    /** From the activity when there is one (stays in the app's task), else as a new task. */
+    private fun start(intent: Intent): Boolean = try {
+        val a = activity
+        if (a != null) a.startActivity(intent) else context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        true
+    } catch (_: Exception) {
+        false
+    }
+
+    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+        activity = binding.activity
+    }
+
+    override fun onDetachedFromActivityForConfigChanges() {
+        activity = null
+    }
+
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+        activity = binding.activity
+    }
+
+    override fun onDetachedFromActivity() {
+        activity = null
+    }
+
+    companion object {
+        const val CHANNEL = "dsh/pet_overlay"
+    }
+}

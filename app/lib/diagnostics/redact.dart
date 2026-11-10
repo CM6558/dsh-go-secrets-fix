@@ -1,0 +1,128 @@
+// The masking every line of a diagnostics bundle goes through before it leaves
+// the phone.
+
+import '../ui/chat/secret_mask.dart' show findSecrets;
+import '../ui/engine/log_view.dart' show stripAnsi;
+
+/// What a removed value becomes.
+const redactionMark = '•••';
+
+/// Longest line kept whole.
+const maxLineLength = 2000;
+
+/// The launch-token mask the native side applies to every engine log line
+/// (`CrashClassifier.redact`): `token=•••`.
+final _launchToken = RegExp(r'token=[A-Za-z0-9._~%-]+');
+
+/// `Authorization: Bearer <credential>` (and `Basic`).
+final _bearer = RegExp(r'\b(Bearer|Basic)\s+(?!•)[A-Za-z0-9._~+/=-]+', caseSensitive: false);
+
+/// Assignments whose value is a secret whatever it looks like:
+/// `password=…`, `"secret": "…"`, `Cookie: …`, `Authorization: Basic …`.
+final _secretAssignment = RegExp(
+  r'''\b([A-Za-z0-9_.-]*(?:passw(?:or)?d|passphrase|secret|credential|cookie|authorization)[A-Za-z0-9_.-]*)("?\s*[:=]\s*["']?)(?!•)(?!(?:Bearer|Basic)\b)([^\s"',;&]+)''',
+  caseSensitive: false,
+);
+
+/// Assignments of key- or token-named values that look like one (8+
+/// characters, not a plain number): `DEEPSEEK_API_KEY=…`, `"apiKey": "…"`,
+/// `access_token=…`; `tokens: 1234` stays.
+final _keyAssignment = RegExp(
+  r'''\b([A-Za-z0-9_.-]*(?:api[_-]?key|apikey|access[_-]?key|private[_-]?key|token)[A-Za-z0-9_.-]*)("?\s*[:=]\s*["']?)(?!•)(?![0-9]+(?:[\s"',;&]|$))([^\s"',;&]{8,})''',
+  caseSensitive: false,
+);
+
+/// Known credential prefixes kept in front of the mark, so a reader still
+/// sees which kind of key was there (`sk-•••`).
+const _prefixes = [
+  'github_pat_',
+  'sk_live_',
+  'sk_test_',
+  'rk_live_',
+  'rk_test_',
+  'whsec_',
+  'glpat-',
+  'xoxa-',
+  'xoxb-',
+  'xoxp-',
+  'xoxr-',
+  'xoxs-',
+  'ghp_',
+  'gho_',
+  'ghu_',
+  'ghs_',
+  'ghr_',
+  'npm_',
+  'hf_',
+  'sk-',
+  'AIza',
+  'AKIA',
+  'ASIA',
+  'LTAI',
+  'AKID',
+];
+
+/// [text] with every credential removed:
+///
+/// - colour escapes stripped;
+/// - API-key-shaped strings (the official secret-mask formats: `sk-…`,
+///   `AIza…`, `ghp_…`, JWTs, private-key blocks, passwords in URLs) replaced
+///   whole, keeping only a known prefix (`sk-•••`) or a key block's
+///   BEGIN / END lines;
+/// - the launch token, as the engine log already masks it (`token=•••`);
+/// - `Bearer …` / `Basic …` credentials and the values of secret-named
+///   assignments.
+///
+/// Unlike the chat's display mask, nothing of a key's own characters stays.
+/// Lines longer than [maxLineLength] are cut first (an inlined image in a
+/// log line says nothing to a reader, and it keeps the scan short).
+String redactDiagnostics(String text) {
+  var out = stripAnsi(text);
+  if (out.length > maxLineLength) {
+    out = out
+        .split('\n')
+        .map((line) => line.length > maxLineLength ? '${line.substring(0, maxLineLength)}…' : line)
+        .join('\n');
+  }
+  final secrets = findSecrets(out);
+  if (secrets.isNotEmpty) {
+    final buffer = StringBuffer();
+    var at = 0;
+    for (final secret in secrets) {
+      buffer
+        ..write(out.substring(at, secret.start))
+        ..write(_maskSpan(out.substring(secret.start, secret.end)));
+      at = secret.end;
+    }
+    buffer.write(out.substring(at));
+    out = buffer.toString();
+  }
+  out = out.replaceAll(_launchToken, 'token=$redactionMark');
+  out = out.replaceAllMapped(_bearer, (m) => '${m[1]} $redactionMark');
+  out = out.replaceAllMapped(_secretAssignment, (m) => '${m[1]}${m[2]}$redactionMark');
+  out = out.replaceAllMapped(_keyAssignment, (m) => '${m[1]}${m[2]}$redactionMark');
+  return out;
+}
+
+/// Every line through [redactDiagnostics].
+List<String> redactLines(Iterable<String> lines) => [for (final line in lines) redactDiagnostics(line)];
+
+/// A JSON-shaped value with every string through [redactDiagnostics]; keys
+/// and non-string values unchanged (`"hasApiKey": true` stays readable).
+Object? redactJson(Object? value) => switch (value) {
+  String() => redactDiagnostics(value),
+  Map() => {for (final e in value.entries) '${e.key}': redactJson(e.value)},
+  Iterable() => [for (final v in value) redactJson(v)],
+  _ => value,
+};
+
+String _maskSpan(String secret) {
+  if (secret.startsWith('-----BEGIN')) {
+    final lines = secret.split('\n');
+    return lines.length < 2 ? redactionMark : '${lines.first}\n$redactionMark\n${lines.last}';
+  }
+  for (final prefix in _prefixes) {
+    if (secret.startsWith(prefix)) return '$prefix$redactionMark';
+  }
+  return redactionMark;
+}
