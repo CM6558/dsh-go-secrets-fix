@@ -54,9 +54,10 @@ void main() {
   test('rapid writes all land', () async {
     final vault = store();
     await Future.wait([for (var i = 0; i < 20; i++) vault.write('k$i', 'v$i')]);
+    // readAll(prefix:) returns keys with the prefix removed.
     final all = await store().readAll(prefix: 'k');
     expect(all, hasLength(20));
-    expect(all['k7'], 'v7');
+    expect(all['7'], 'v7');
   });
 
   test('delete removes only that key', () async {
