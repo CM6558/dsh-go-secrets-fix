@@ -18,9 +18,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-import '../remote/secret_store.dart' show SecretStore;
+import '../remote/secret_store.dart' show NamespacedSecretStore, SecretStore, appSecretVault;
 import '../state/account_state.dart' show accountBrowserProvider;
 import '../l10n/l10n.dart';
 import 'discourse_client.dart';
@@ -29,25 +28,9 @@ import 'forum_crypto.dart';
 import 'forum_models.dart';
 import 'forum_state.dart';
 
-/// Android Keystore-backed storage for the forum's key pair and API key.
-class SecureForumStore implements SecretStore {
-  SecureForumStore([FlutterSecureStorage? storage]) : _storage = storage ?? const FlutterSecureStorage();
-
-  final FlutterSecureStorage _storage;
-
-  static String _k(String key) => 'forum.$key';
-
-  @override
-  Future<String?> read(String key) => _storage.read(key: _k(key));
-
-  @override
-  Future<void> write(String key, String value) => _storage.write(key: _k(key), value: value);
-
-  @override
-  Future<void> delete(String key) => _storage.delete(key: _k(key));
-}
-
-final forumSecretStoreProvider = Provider<SecretStore>((ref) => SecureForumStore());
+/// The forum's key pair and API key, in the app-private secret file under
+/// `forum.` (see [FileSecretStore]).
+final forumSecretStoreProvider = Provider<SecretStore>((ref) => NamespacedSecretStore(appSecretVault, 'forum.'));
 
 /// Makes (or, in tests, hands out) the install's RSA key pair.
 final forumKeyPairFactoryProvider = Provider<Future<ForumKeyPair> Function()>((ref) => generateForumKeyPair);
@@ -93,7 +76,7 @@ class ForumAuthState {
   );
 }
 
-/// Storage keys (namespaced `forum.` by [SecureForumStore]).
+/// Storage keys (namespaced `forum.` by [forumSecretStoreProvider]).
 abstract final class _Keys {
   static const keyPair = 'rsa';
   static const clientId = 'client';

@@ -7262,6 +7262,9 @@
   "remoteErrReadFingerprint": "没能读到主机指纹",
   "remoteErrNoFingerprint": "服务器没有提供主机指纹",
   "remoteErrPasswordMissing": "还没有填写密码",
+  "remoteErrPasswordUnreadable": "已保存的密码读不出来",
+  "remoteErrKeyUnreadableStored": "已保存的私钥读不出来",
+  "remoteErrSecretUnreadableHint": "密码或私钥仍保存在这台手机上，只是这次解不开（通常是系统密钥库被重置或换了设备）。重新填一次就会覆盖，原来的副本无法恢复。",
   "remoteErrAddressUnresponsive": "{host}:{port} 没有响应",
   "@remoteErrAddressUnresponsive": {
     "placeholders": {
@@ -7749,6 +7752,7 @@
   "remoteSwitchToPhone": "切回本机",
   "remoteSignInAgain": "重新登录",
   "remoteHostSettings": "主机设置",
+  "remoteReenterSecret": "重新填写",
   "remoteReconnect": "重新连接",
   "remoteReconnectingEllipsis": "重新连接中…",
   "remoteReconnectReason": "重新连接中 · {reason}",
@@ -7827,8 +7831,8 @@
   "remoteUsername": "用户名",
   "remotePort": "端口",
   "remoteAuthentication": "登录方式",
-  "remotePasswordStorageHelp": "只保存在这台手机上，由 Android Keystore 加密",
-  "remoteKeyStorageHelp": "只保存在这台手机上，由 Android Keystore 加密。支持 Ed25519、RSA、ECDSA",
+  "remotePasswordStorageHelp": "只保存在这台手机的应用私有目录，其他应用读不到",
+  "remoteKeyStorageHelp": "只保存在这台手机的应用私有目录，其他应用读不到。支持 Ed25519、RSA、ECDSA",
   "remotePrivateKey": "私钥",
   "remoteShow": "显示",
   "remoteImportKeyFile": "从文件导入",

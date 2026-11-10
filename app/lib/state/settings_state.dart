@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../l10n/l10n.dart';
 import '../performance/performance_state.dart';
+import '../remote/secret_store.dart';
 import 'provider_keys.dart';
 import 'read_list_epoch.dart';
 
 /// User settings: the DeepSeek API key (and custom-provider keys, see
-/// [ProviderKeyVault]) live in the Android Keystore-backed secure storage;
-/// plain preferences go to SharedPreferences.
+/// [ProviderKeyVault]) live in the app-private secret file (see
+/// [FileSecretStore]); plain preferences go to SharedPreferences.
 class AppSettings {
   const AppSettings({
     this.apiKey = '',
@@ -118,7 +118,7 @@ class SettingsController extends Notifier<AppSettings> {
   static const _chatTextScaleKey = 'chat_text_scale';
   static const _foldTurnsKey = 'fold_completed_turns';
   static const _visualRepliesKey = 'visual_replies';
-  static const _secure = FlutterSecureStorage();
+  static final _secure = NamespacedSecretStore(appSecretVault);
   late Future<void> _loaded;
 
   @override
@@ -137,9 +137,9 @@ class SettingsController extends Notifier<AppSettings> {
     if (!ref.mounted) return;
     String apiKey = '';
     try {
-      apiKey = await _secure.read(key: _apiKeyKey) ?? '';
+      apiKey = await _secure.read(_apiKeyKey) ?? '';
     } catch (_) {
-      // Keystore unavailable or corrupted; the user can re-enter the key.
+      // Storage unreadable; the user can re-enter the key.
     }
     if (!ref.mounted) return;
     var providerIds = const <String>{};
@@ -186,9 +186,9 @@ class SettingsController extends Notifier<AppSettings> {
     ref.read(readListCredentialEpochProvider.notifier).advance();
     final trimmed = key.trim();
     if (trimmed.isEmpty) {
-      await _secure.delete(key: _apiKeyKey);
+      await _secure.delete(_apiKeyKey);
     } else {
-      await _secure.write(key: _apiKeyKey, value: trimmed);
+      await _secure.write(_apiKeyKey, trimmed);
     }
     state = state.copyWith(apiKey: trimmed);
   }

@@ -11425,6 +11425,16 @@ class L10nZh extends L10n {
   String get remoteErrPasswordMissing => '还没有填写密码';
 
   @override
+  String get remoteErrPasswordUnreadable => '已保存的密码读不出来';
+
+  @override
+  String get remoteErrKeyUnreadableStored => '已保存的私钥读不出来';
+
+  @override
+  String get remoteErrSecretUnreadableHint =>
+      '密码或私钥仍保存在这台手机上，只是这次解不开（通常是系统密钥库被重置或换了设备）。重新填一次就会覆盖，原来的副本无法恢复。';
+
+  @override
   String remoteErrAddressUnresponsive(String host, int port) {
     return '$host:$port 没有响应';
   }
@@ -12044,6 +12054,9 @@ class L10nZh extends L10n {
   String get remoteHostSettings => '主机设置';
 
   @override
+  String get remoteReenterSecret => '重新填写';
+
+  @override
   String get remoteReconnect => '重新连接';
 
   @override
@@ -12183,10 +12196,10 @@ class L10nZh extends L10n {
   String get remoteAuthentication => '登录方式';
 
   @override
-  String get remotePasswordStorageHelp => '只保存在这台手机上，由 Android Keystore 加密';
+  String get remotePasswordStorageHelp => '只保存在这台手机的应用私有目录，其他应用读不到';
 
   @override
-  String get remoteKeyStorageHelp => '只保存在这台手机上，由 Android Keystore 加密。支持 Ed25519、RSA、ECDSA';
+  String get remoteKeyStorageHelp => '只保存在这台手机的应用私有目录，其他应用读不到。支持 Ed25519、RSA、ECDSA';
 
   @override
   String get remotePrivateKey => '私钥';

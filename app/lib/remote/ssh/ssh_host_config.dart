@@ -145,7 +145,7 @@ class SshHostConfig {
 
 /// The secret material for one SSH host, loaded from the [SecretStore].
 class SshSecrets {
-  const SshSecrets({this.password, this.privateKey, this.passphrase});
+  const SshSecrets({this.password, this.privateKey, this.passphrase, this.unreadable = const {}});
 
   final String? password;
 
@@ -153,9 +153,30 @@ class SshSecrets {
   final String? privateKey;
   final String? passphrase;
 
+  /// Which of the three values is stored but could not be decrypted right now.
+  ///
+  /// Those fields read as null like a never-saved one, but the two are not the
+  /// same thing: this one must be reported as unreadable, and saving an empty
+  /// value for it would throw away the bytes that may still be recoverable.
+  final Set<SshSecretField> unreadable;
+
   static String passwordKey(String hostId) => 'ssh.$hostId.password';
   static String privateKeyKey(String hostId) => 'ssh.$hostId.privateKey';
   static String passphraseKey(String hostId) => 'ssh.$hostId.passphrase';
 
-  bool get isEmpty => (password == null || password!.isEmpty) && (privateKey == null || privateKey!.trim().isEmpty);
+  /// Nothing usable for [auth]: no password, or no key.
+  bool isEmptyFor(SshAuthMethod auth) => switch (auth) {
+    SshAuthMethod.password => password == null || password!.isEmpty,
+    SshAuthMethod.privateKey => privateKey == null || privateKey!.trim().isEmpty,
+  };
+
+  /// The stored secret for [auth] can't be decrypted, so it can't be used and
+  /// must not be reported as "enter it again".
+  bool isUnreadableFor(SshAuthMethod auth) => switch (auth) {
+    SshAuthMethod.password => unreadable.contains(SshSecretField.password),
+    SshAuthMethod.privateKey => unreadable.contains(SshSecretField.privateKey),
+  };
 }
+
+/// One stored secret of an SSH host.
+enum SshSecretField { password, privateKey, passphrase }

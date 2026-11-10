@@ -204,7 +204,11 @@ class _ActiveCard extends ConsumerWidget {
                       )
                     : needsSettings
                     ? (
-                        l10n.remoteHostSettings,
+                        // A stored secret that can't be decrypted is fixed by
+                        // entering it again, not by poking at settings.
+                        error.kind == HostLinkErrorKind.secretUnreadable
+                            ? l10n.remoteReenterSecret
+                            : l10n.remoteHostSettings,
                         () =>
                             Navigator.of(context)
                                 .push(MaterialPageRoute<void>(builder: (_) => SshHostFormPage(existing: ssh))),

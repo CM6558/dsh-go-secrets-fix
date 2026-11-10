@@ -1,10 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../remote/secret_store.dart';
 import 'provider_backend.dart';
 
 /// The API keys of custom providers created on the **local** engine, kept in
-/// the Android Keystore-backed secure storage under `provider_key_<id>`.
+/// the app-private secret file under `provider_key_<id>` (see [FileSecretStore]).
 ///
 /// The engine's own credential store (`$DSH_HOME/.credentials.yaml`) is what
 /// serves requests; this copy only exists so a key that went missing there
@@ -24,29 +24,28 @@ abstract class ProviderKeyVault {
   Future<void> delete(String id);
 }
 
-class SecureProviderKeyVault implements ProviderKeyVault {
-  const SecureProviderKeyVault([this._storage = const FlutterSecureStorage()]);
+class FileProviderKeyVault implements ProviderKeyVault {
+  FileProviderKeyVault([SecretStore? store]) : _store = store ?? NamespacedSecretStore(appSecretVault);
 
-  final FlutterSecureStorage _storage;
+  final SecretStore _store;
 
   @override
   Future<Map<String, String>> readAll() async {
-    final all = await _storage.readAll();
+    final all = await _store.readAll(prefix: ProviderKeyVault.prefix);
     return {
       for (final entry in all.entries)
-        if (entry.key.startsWith(ProviderKeyVault.prefix) && entry.value.isNotEmpty)
-          entry.key.substring(ProviderKeyVault.prefix.length): entry.value,
+        if (entry.value.isNotEmpty) entry.key: entry.value,
     };
   }
 
   @override
-  Future<void> write(String id, String key) => _storage.write(key: '${ProviderKeyVault.prefix}$id', value: key);
+  Future<void> write(String id, String key) => _store.write('${ProviderKeyVault.prefix}$id', key);
 
   @override
-  Future<void> delete(String id) => _storage.delete(key: '${ProviderKeyVault.prefix}$id');
+  Future<void> delete(String id) => _store.delete('${ProviderKeyVault.prefix}$id');
 }
 
-final providerKeyVaultProvider = Provider<ProviderKeyVault>((ref) => const SecureProviderKeyVault());
+final providerKeyVaultProvider = Provider<ProviderKeyVault>((ref) => FileProviderKeyVault());
 
 /// Puts saved custom-provider keys back into a freshly connected **local**
 /// engine, but only where they are missing: a key that is present (maybe

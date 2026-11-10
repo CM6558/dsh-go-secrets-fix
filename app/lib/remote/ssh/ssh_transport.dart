@@ -100,6 +100,17 @@ class DartSshTransport implements SshTransport {
   final SSHClient _client;
 
   static Future<SshTransport> connect(SshConnectParams params, HostKeyCheck verifyHostKey) async {
+    // A secret that is stored but cannot be decrypted is not a missing one:
+    // reporting "enter it again" sends people to retype a credential that is
+    // still there, and hides the real fault (the Keystore could not unwrap it).
+    if (params.secrets.isUnreadableFor(params.auth)) {
+      throw HostLinkError(
+        HostLinkErrorKind.secretUnreadable,
+        params.auth == SshAuthMethod.password
+            ? appL10n.remoteErrPasswordUnreadable
+            : appL10n.remoteErrKeyUnreadableStored,
+      );
+    }
     List<SSHKeyPair>? identities;
     if (params.auth == SshAuthMethod.privateKey) {
       identities = await decodePrivateKey(params.secrets.privateKey ?? '', params.secrets.passphrase);

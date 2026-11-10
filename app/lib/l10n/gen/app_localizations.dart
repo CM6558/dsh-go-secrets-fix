@@ -20930,6 +20930,24 @@ abstract class L10n {
   /// **'还没有填写密码'**
   String get remoteErrPasswordMissing;
 
+  /// No description provided for @remoteErrPasswordUnreadable.
+  ///
+  /// In zh, this message translates to:
+  /// **'已保存的密码读不出来'**
+  String get remoteErrPasswordUnreadable;
+
+  /// No description provided for @remoteErrKeyUnreadableStored.
+  ///
+  /// In zh, this message translates to:
+  /// **'已保存的私钥读不出来'**
+  String get remoteErrKeyUnreadableStored;
+
+  /// No description provided for @remoteErrSecretUnreadableHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'密码或私钥仍保存在这台手机上，只是这次解不开（通常是系统密钥库被重置或换了设备）。重新填一次就会覆盖，原来的副本无法恢复。'**
+  String get remoteErrSecretUnreadableHint;
+
   /// No description provided for @remoteErrAddressUnresponsive.
   ///
   /// In zh, this message translates to:
@@ -22004,6 +22022,12 @@ abstract class L10n {
   /// **'主机设置'**
   String get remoteHostSettings;
 
+  /// No description provided for @remoteReenterSecret.
+  ///
+  /// In zh, this message translates to:
+  /// **'重新填写'**
+  String get remoteReenterSecret;
+
   /// No description provided for @remoteReconnect.
   ///
   /// In zh, this message translates to:
@@ -22265,13 +22289,13 @@ abstract class L10n {
   /// No description provided for @remotePasswordStorageHelp.
   ///
   /// In zh, this message translates to:
-  /// **'只保存在这台手机上，由 Android Keystore 加密'**
+  /// **'只保存在这台手机的应用私有目录，其他应用读不到'**
   String get remotePasswordStorageHelp;
 
   /// No description provided for @remoteKeyStorageHelp.
   ///
   /// In zh, this message translates to:
-  /// **'只保存在这台手机上，由 Android Keystore 加密。支持 Ed25519、RSA、ECDSA'**
+  /// **'只保存在这台手机的应用私有目录，其他应用读不到。支持 Ed25519、RSA、ECDSA'**
   String get remoteKeyStorageHelp;
 
   /// No description provided for @remotePrivateKey.

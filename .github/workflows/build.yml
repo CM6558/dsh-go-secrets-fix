@@ -1,0 +1,259 @@
+# Builds a dsh-go APK on GitHub's runners.
+#
+# Why this exists: the phone-side checkout can't build. `tooling/build-apk.sh`
+# needs a Flutter SDK (stable, matching app/pubspec.yaml's `sdk: ^3.13.5`) and
+# Flutter publishes no Linux/aarch64 host build, so a Termux-on-phone build is
+# not possible. The runtime bundle (`runtime/build-runtime.sh`) additionally
+# requires an x86_64 Linux host by design.
+#
+# Two outputs:
+#   * the APK, as a workflow artifact (and attached to a Release when run from a tag);
+#   * a `dart test` / `flutter analyze` report for the secret-storage change.
+#
+# Signing: release builds use app/android/key.properties when the
+# DSHGO_KEYSTORE_* secrets are configured; without them the build falls back to
+# the debug key (fine for sideloading and for verifying this change, not for a
+# public release — see docs/release.md「签名」).
+
+name: build
+
+on:
+  workflow_dispatch:
+    inputs:
+      flavor:
+        description: 'arm64, x64, or all'
+        required: true
+        default: arm64
+        type: choice
+        options: [arm64, x64, all]
+      mode:
+        description: 'release or debug'
+        required: true
+        default: release
+        type: choice
+        options: [release, debug]
+      build_number:
+        description: 'Override the versionCode (build minute). Leave empty for the build minute.'
+        required: false
+        default: ''
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'app/lib/remote/**'
+      - 'app/lib/state/hosts_state.dart'
+      - 'app/test/remote/**'
+      - '.github/workflows/build.yml'
+
+# One run at a time per ref: the runtime bundle is large and the build is long.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # attach the APK to a Release when the run is on a tag
+
+env:
+  FLUTTER_VERSION: '3.47.7'
+  # The runtime bundle is pinned to these; keep them in step with
+  # runtime/build-runtime.sh so a rebuild reproduces the same assets.
+  NODE_VERSION: '24.22.1'
+  PNPM_VERSION: '11.28.5'
+
+jobs:
+  # Static checks first: they are fast, and a red analyze/test should stop the
+  # expensive runtime build.
+  checks:
+    name: analyze + test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: pub get
+        working-directory: app
+        run: flutter pub get
+
+      - name: analyze
+        working-directory: app
+        run: flutter analyze
+
+      - name: test
+        working-directory: app
+        run: flutter test --reporter expanded
+
+  # The Linux runtime that ships inside the APK. Produces runtime/out/<abi>/,
+  # which app/android/app/build.gradle.kts reads as extra assets/jniLibs.
+  runtime:
+    name: runtime ${{ inputs.flavor || 'arm64' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl ca-certificates xz-utils gpgv python3 unzip
+
+      - name: cache runtime downloads
+        uses: actions/cache@v4
+        with:
+          path: runtime/.cache
+          key: runtime-cache-${{ env.NODE_VERSION }}-${{ env.PNPM_VERSION }}-${{ hashFiles('runtime/locks/**') }}
+          restore-keys: runtime-cache-
+
+      - name: build runtime
+        env:
+          NODE_VERSION: ${{ env.NODE_VERSION }}
+          PNPM_VERSION: ${{ env.PNPM_VERSION }}
+        run: |
+          # build-runtime.sh takes no argument for "both ABIs".
+          case "${{ inputs.flavor || 'arm64' }}" in
+            arm64) ./runtime/build-runtime.sh arm64 ;;
+            x64) ./runtime/build-runtime.sh x86_64 ;;
+            all) ./runtime/build-runtime.sh ;;
+            *) echo "unknown flavor" >&2 ; exit 1 ;;
+          esac
+
+      - name: guard tests
+        run: ./runtime/tests/run-guard-tests.sh || echo "::warning::guard tests did not run (see log)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-out
+          path: runtime/out
+          retention-days: 3
+          if-no-files-found: error
+
+  apk:
+    name: apk ${{ inputs.flavor || 'arm64' }} (${{ inputs.mode || 'release' }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    needs: runtime
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-out
+          path: runtime/out
+
+      - name: android sdk components
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          # Licenses must be accepted for AGP to fetch anything on its own.
+          yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
+          # The NDK is whatever this Flutter pins (build.gradle.kts uses
+          # `flutter.ndkVersion`); read it instead of hardcoding a version that
+          # may not exist for this Flutter release.
+          ndk=$(flutter doctor -v | sed -n 's/^ *Android NDK version: *//p' | head -1)
+          pkgs=("platform-tools" "platforms;android-35" "build-tools;35.0.0")
+          [ -n "$ndk" ] && pkgs+=("ndk;$ndk")
+          echo "installing: ${pkgs[*]}"
+          "$sdkmanager" "${pkgs[@]}" >/dev/null
+
+      # Optional release signing. Without the secrets the build uses the debug
+      # key, which still installs over an existing install only if the version
+      # code is higher (the build minute guarantees that).
+      - name: release keystore
+        if: ${{ inputs.mode == 'release' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.DSHGO_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.DSHGO_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.DSHGO_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.DSHGO_KEY_PASSWORD }}
+        run: |
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::notice::No DSHGO_KEYSTORE_BASE64 secret; building with the debug key."
+            exit 0
+          fi
+          mkdir -p app/android
+          echo "$KEYSTORE_BASE64" | base64 -d > app/android/release.keystore
+          cat > app/android/key.properties <<EOF
+          storeFile=release.keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      # One `flutter build apk` per flavor: arm64 and x64 are separate Android
+      # product flavors, so "all" is two builds sharing one versionCode.
+      - name: build apk
+        working-directory: app
+        env:
+          FLAVOR: ${{ inputs.flavor || 'arm64' }}
+          MODE: ${{ inputs.mode || 'release' }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          case "$FLAVOR" in
+            arm64) targets=(android-arm64) ; flavors=(arm64) ;;
+            x64) targets=(android-x64) ; flavors=(x64) ;;
+            all) targets=(android-arm64 android-x64) ; flavors=(arm64 x64) ;;
+            *) echo "unknown flavor: $FLAVOR" >&2 ; exit 1 ;;
+          esac
+          code="${BUILD_NUMBER:-$(python3 ../tooling/build_number.py)}"
+          name=$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' pubspec.yaml)
+          for i in "${!flavors[@]}"; do
+            f="${flavors[$i]}"
+            echo "::group::flutter build apk --$MODE --flavor $f"
+            flutter build apk "--$MODE" \
+              --flavor "$f" \
+              --target-platform "${targets[$i]}" \
+              --build-name "$name" \
+              --build-number "$code" \
+              --dart-define="DSH_APP_VERSION=$name+$code"
+            echo "::endgroup::"
+          done
+
+      - name: collect
+        run: |
+          name=$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' app/pubspec.yaml)
+          mkdir -p dist
+          for f in app/build/app/outputs/flutter-apk/app-*-release.apk app/build/app/outputs/flutter-apk/app-*-debug.apk; do
+            [ -f "$f" ] || continue
+            flavor=$(basename "$f" | sed -E 's/^app-(.*)-(release|debug)\.apk$/\1/')
+            mode=$(basename "$f" | sed -E 's/^app-.*-(release|debug)\.apk$/\1/')
+            cp "$f" "dist/dsh-go-${name}-${flavor}-${mode}.apk"
+          done
+          (cd dist && sha256sum ./*.apk > SHA256SUMS)
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ inputs.flavor || 'arm64' }}-${{ inputs.mode || 'release' }}
+          path: dist
+          retention-days: 14
+
+      - name: attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "$tag" --notes "Build from $GITHUB_SHA"
+          gh release upload "$tag" dist/*.apk dist/SHA256SUMS --clobber

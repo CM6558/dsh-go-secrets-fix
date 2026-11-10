@@ -66,6 +66,10 @@ enum HostLinkErrorKind {
   unreachable,
   authFailed,
   badPrivateKey,
+
+  /// The stored secret exists but the platform storage could not decrypt it.
+  /// Retrying won't help; the person has to store it again.
+  secretUnreadable,
   hostKeyMismatch,
   hostKeyRejected,
   hostKeyUnverified,

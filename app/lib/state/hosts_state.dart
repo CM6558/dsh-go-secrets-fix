@@ -86,8 +86,12 @@ String _short(String name) {
 
 // ── Secrets ──────────────────────────────────────────────────────────────────
 
-/// Keystore-backed in the app; tests override with [MemorySecretStore].
-final secretStoreProvider = Provider<SecretStore>((ref) => SecureSecretStore());
+/// App-private file storage in the app; tests override with
+/// [MemorySecretStore]. See [FileSecretStore] for why this is not the Android
+/// Keystore.
+///
+/// `remote.` keeps these keys apart from the other stores sharing the file.
+final secretStoreProvider = Provider<SecretStore>((ref) => NamespacedSecretStore(appSecretVault, 'remote.'));
 
 // ── Saved SSH hosts ──────────────────────────────────────────────────────────
 
@@ -172,30 +176,50 @@ class HostsController extends Notifier<HostsState> {
       }
     }
 
+    // A field the form could not load (it reported "unreadable") arrives empty.
+    // Writing that as a delete would throw away bytes that may still be
+    // readable once the Keystore recovers, and the person never asked to
+    // remove it — keep whatever is stored and only write what they typed.
+    bool keepStored(SshSecretField field) => secrets.unreadable.contains(field);
+
     if (config.auth == SshAuthMethod.password) {
-      await put(SshSecrets.passwordKey(id), secrets.password);
+      if (!keepStored(SshSecretField.password)) await put(SshSecrets.passwordKey(id), secrets.password);
       await _secrets.delete(SshSecrets.privateKeyKey(id));
       await _secrets.delete(SshSecrets.passphraseKey(id));
     } else {
-      await put(SshSecrets.privateKeyKey(id), secrets.privateKey?.trim());
-      await put(SshSecrets.passphraseKey(id), secrets.passphrase);
+      if (!keepStored(SshSecretField.privateKey)) {
+        await put(SshSecrets.privateKeyKey(id), secrets.privateKey?.trim());
+      }
+      if (!keepStored(SshSecretField.passphrase)) {
+        await put(SshSecrets.passphraseKey(id), secrets.passphrase);
+      }
       await _secrets.delete(SshSecrets.passwordKey(id));
     }
   }
 
+  /// Reads the stored secrets, keeping "couldn't hand it over" apart from
+  /// "never saved" (see `SecretUnreadableException`).
   Future<SshSecrets> loadSecrets(String id) async {
-    Future<String?> get(String key) async {
+    final unreadable = <SshSecretField>{};
+    Future<String?> get(String key, SshSecretField field) async {
       try {
         return await _secrets.read(key);
       } catch (_) {
+        // The store could not hand the value over. It may still be on disk, so
+        // report the field as unreadable instead of pretending it is absent.
+        unreadable.add(field);
         return null;
       }
     }
 
+    final password = await get(SshSecrets.passwordKey(id), SshSecretField.password);
+    final privateKey = await get(SshSecrets.privateKeyKey(id), SshSecretField.privateKey);
+    final passphrase = await get(SshSecrets.passphraseKey(id), SshSecretField.passphrase);
     return SshSecrets(
-      password: await get(SshSecrets.passwordKey(id)),
-      privateKey: await get(SshSecrets.privateKeyKey(id)),
-      passphrase: await get(SshSecrets.passphraseKey(id)),
+      password: password,
+      privateKey: privateKey,
+      passphrase: passphrase,
+      unreadable: unreadable,
     );
   }
 

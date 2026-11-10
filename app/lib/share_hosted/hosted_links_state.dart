@@ -1,14 +1,14 @@
 // 「我的分享链接」, the hosted links made on this phone. Each holds its
-// decryption key and delete token, so the list lives in the Keystore-backed
-// secure storage, like the API keys (settings_state.dart).
+// decryption key and delete token, so the list lives in the app-private secret
+// file, like the API keys (see FileSecretStore).
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../remote/secret_store.dart';
 import 'hosted_client.dart';
 import 'hosted_link.dart';
 
@@ -17,17 +17,17 @@ abstract class HostedLinkStore {
   Future<void> save(List<HostedLink> links);
 }
 
-class SecureHostedLinkStore implements HostedLinkStore {
-  const SecureHostedLinkStore([this._storage = const FlutterSecureStorage()]);
+class FileHostedLinkStore implements HostedLinkStore {
+  FileHostedLinkStore([SecretStore? store]) : _store = store ?? NamespacedSecretStore(appSecretVault, 'hosted.');
 
   static const storageKey = 'hosted_links';
-  final FlutterSecureStorage _storage;
+  final SecretStore _store;
 
   @override
   Future<List<HostedLink>> load() async {
     String? raw;
     try {
-      raw = await _storage.read(key: storageKey);
+      raw = await _store.read(storageKey);
     } catch (_) {
       return const [];
     }
@@ -43,10 +43,10 @@ class SecureHostedLinkStore implements HostedLinkStore {
 
   @override
   Future<void> save(List<HostedLink> links) =>
-      _storage.write(key: storageKey, value: jsonEncode([for (final l in links) l.toJson()]));
+      _store.write(storageKey, jsonEncode([for (final l in links) l.toJson()]));
 }
 
-final hostedLinkStoreProvider = Provider<HostedLinkStore>((ref) => const SecureHostedLinkStore());
+final hostedLinkStoreProvider = Provider<HostedLinkStore>((ref) => FileHostedLinkStore());
 
 final hostedShareClientProvider = Provider<HostedShareClient>((ref) {
   final client = HostedShareClient();

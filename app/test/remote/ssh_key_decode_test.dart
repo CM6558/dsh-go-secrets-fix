@@ -84,4 +84,50 @@ void main() {
       }
     });
   }
+
+  // A secret the store could not hand over is not a secret the person forgot to
+  // type: the copy is still on the phone. Saying "enter it again" hides that.
+  for (final (auth, message) in [
+    (SshAuthMethod.privateKey, appL10n.remoteErrKeyUnreadableStored),
+    (SshAuthMethod.password, appL10n.remoteErrPasswordUnreadable),
+  ]) {
+    test('an unreadable stored secret reports unreadable, not missing (${auth.name})', () async {
+      final params = SshConnectParams(
+        host: '127.0.0.1',
+        port: 22,
+        username: 'u',
+        auth: auth,
+        secrets: SshSecrets(
+          unreadable: {auth == SshAuthMethod.password ? SshSecretField.password : SshSecretField.privateKey},
+        ),
+      );
+      await expectLater(
+        DartSshTransport.connect(params, (_) => true),
+        throwsA(
+          isA<HostLinkError>()
+              .having((error) => error.kind, 'kind', HostLinkErrorKind.secretUnreadable)
+              .having((error) => error.message, 'message', message)
+              .having((error) => error.retryable, 'retryable', isFalse),
+        ),
+      );
+    });
+  }
+
+  test('a missing secret still reports missing', () async {
+    final params = SshConnectParams(
+      host: '127.0.0.1',
+      port: 22,
+      username: 'u',
+      auth: SshAuthMethod.privateKey,
+      secrets: const SshSecrets(),
+    );
+    await expectLater(
+      DartSshTransport.connect(params, (_) => true),
+      throwsA(
+        isA<HostLinkError>()
+            .having((error) => error.kind, 'kind', HostLinkErrorKind.badPrivateKey)
+            .having((error) => error.message, 'message', appL10n.remoteErrPrivateKeyMissing),
+      ),
+    );
+  });
 }

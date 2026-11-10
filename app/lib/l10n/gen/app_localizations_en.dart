@@ -11991,6 +11991,16 @@ class L10nEn extends L10n {
   String get remoteErrPasswordMissing => 'Enter a password';
 
   @override
+  String get remoteErrPasswordUnreadable => 'The saved password can’t be read';
+
+  @override
+  String get remoteErrKeyUnreadableStored => 'The saved private key can’t be read';
+
+  @override
+  String get remoteErrSecretUnreadableHint =>
+      'The password or key is still on this phone; it just can’t be decrypted this time (usually the system keystore was reset or replaced). Entering it again overwrites it — the old copy can’t be recovered.';
+
+  @override
   String remoteErrAddressUnresponsive(String host, int port) {
     return '$host:$port isn’t responding';
   }
@@ -12635,6 +12645,9 @@ class L10nEn extends L10n {
   String get remoteHostSettings => 'Host settings';
 
   @override
+  String get remoteReenterSecret => 'Enter it again';
+
+  @override
   String get remoteReconnect => 'Reconnect';
 
   @override
@@ -12777,11 +12790,12 @@ class L10nEn extends L10n {
   String get remoteAuthentication => 'Sign-in method';
 
   @override
-  String get remotePasswordStorageHelp => 'Saved only on this phone, encrypted by Android Keystore';
+  String get remotePasswordStorageHelp =>
+      'Saved only on this phone, in the app\'s private storage other apps can\'t read';
 
   @override
   String get remoteKeyStorageHelp =>
-      'Saved only on this phone, encrypted by Android Keystore. Supports Ed25519, RSA and ECDSA.';
+      'Saved only on this phone, in the app\'s private storage other apps can\'t read. Supports Ed25519, RSA and ECDSA.';
 
   @override
   String get remotePrivateKey => 'Private key';

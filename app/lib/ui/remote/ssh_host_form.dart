@@ -62,6 +62,10 @@ class _SshHostFormPageState extends ConsumerState<SshHostFormPage> {
   /// A problem that isn't about one field (saving failed).
   String? _formError;
 
+  /// Stored secrets this form could not decrypt when it opened. Their fields
+  /// are empty, and saving must leave the stored bytes alone.
+  Set<SshSecretField> _unreadableSecrets = const {};
+
   /// What is missing or wrong, shown under the field it is about.
   Map<_F, String> _errors = const {};
 
@@ -150,6 +154,12 @@ class _SshHostFormPageState extends ConsumerState<SshHostFormPage> {
       if (!edited.contains(_password)) _password.text = secrets.password ?? '';
       if (!edited.contains(_privateKey)) _privateKey.text = secrets.privateKey ?? '';
       if (!edited.contains(_passphrase)) _passphrase.text = secrets.passphrase ?? '';
+      // A stored secret that can't be decrypted leaves its field empty. Say so,
+      // instead of showing a blank box that reads as "never set" — and keep the
+      // fields in [SshSecrets.unreadable] so saving doesn't delete the copy
+      // that is still there.
+      _unreadableSecrets = secrets.unreadable;
+      _formError = secrets.unreadable.isEmpty ? _formError : context.l10n.remoteErrSecretUnreadableHint;
       // Hydrate only the original secret values in the clean baseline. Other
       // fields may have been edited while secure storage was being read.
       _clean = jsonEncode({
@@ -180,9 +190,15 @@ class _SshHostFormPageState extends ConsumerState<SshHostFormPage> {
       if (host.isEmpty) _F.host: context.l10n.remoteSshAddressRequired,
       if (user.isEmpty) _F.user: context.l10n.remoteSshUsernameRequired,
       if (port == null || port <= 0 || port > 65535) _F.port: '1–65535',
-      if (_auth == SshAuthMethod.password && _password.text.isEmpty)
+      // An unreadable secret is still stored: other fields can be saved without
+      // retyping it (the copy is kept, not deleted). It just can't connect.
+      if (_auth == SshAuthMethod.password &&
+          _password.text.isEmpty &&
+          !_unreadableSecrets.contains(SshSecretField.password))
         _F.password: context.l10n.remoteSshPasswordRequired,
-      if (_auth == SshAuthMethod.privateKey && _privateKey.text.trim().isEmpty)
+      if (_auth == SshAuthMethod.privateKey &&
+          _privateKey.text.trim().isEmpty &&
+          !_unreadableSecrets.contains(SshSecretField.privateKey))
         _F.key: context.l10n.remoteSshKeyRequired,
     };
     setState(() {
@@ -222,11 +238,25 @@ class _SshHostFormPageState extends ConsumerState<SshHostFormPage> {
 
   /// Typing in a field clears its error.
   void _edited(_F field) {
+    // Typing a secret replaces whatever was stored, including a copy this form
+    // couldn't decrypt: from here on the field holds the person's own value.
+    final secret = switch (field) {
+      _F.password => SshSecretField.password,
+      _F.key => SshSecretField.privateKey,
+      _ => null,
+    };
+    if (secret != null && _unreadableSecrets.contains(secret)) {
+      setState(() => _unreadableSecrets = {..._unreadableSecrets}..remove(secret));
+    }
     if (_errors.containsKey(field)) setState(() => _errors = {..._errors}..remove(field));
   }
 
-  SshSecrets get _secrets =>
-      SshSecrets(password: _password.text, privateKey: _privateKey.text, passphrase: _passphrase.text);
+  SshSecrets get _secrets => SshSecrets(
+    password: _password.text,
+    privateKey: _privateKey.text,
+    passphrase: _passphrase.text,
+    unreadable: _unreadableSecrets,
+  );
 
   Future<void> _runTest() async {
     FocusManager.instance.primaryFocus?.unfocus();

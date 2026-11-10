@@ -177,6 +177,67 @@ void main() {
       expect(secrets.values, isEmpty);
       expect(c.read(activeHostProvider), HostRef.local);
     });
+
+    test('a secret that cannot be decrypted is reported as unreadable, not as missing', () async {
+      final c = container();
+      await loaded(c);
+      final hosts = c.read(hostsProvider.notifier);
+      await hosts.saveSsh(
+        sampleSsh.copyWith(auth: SshAuthMethod.privateKey),
+        secrets: const SshSecrets(privateKey: '-----BEGIN KEY-----'),
+      );
+
+      secrets.unreadable.add(SshSecrets.privateKeyKey(sampleSsh.id));
+      final loadedSecrets = await hosts.loadSecrets(sampleSsh.id);
+      expect(loadedSecrets.privateKey, isNull, reason: 'the value itself is unavailable');
+      expect(loadedSecrets.unreadable, {SshSecretField.privateKey});
+      expect(loadedSecrets.isUnreadableFor(SshAuthMethod.privateKey), isTrue);
+      expect(
+        loadedSecrets.isEmptyFor(SshAuthMethod.privateKey),
+        isTrue,
+        reason: 'nothing usable, but this is not the same as never saved',
+      );
+    });
+
+    test('saving a form that could not load the secret keeps the stored copy', () async {
+      final c = container();
+      await loaded(c);
+      final hosts = c.read(hostsProvider.notifier);
+      await hosts.saveSsh(
+        sampleSsh.copyWith(auth: SshAuthMethod.privateKey),
+        secrets: const SshSecrets(privateKey: '-----BEGIN KEY-----', passphrase: 'pp'),
+      );
+      final stored = Map.of(secrets.values);
+
+      // What the edit form submits after an unreadable load: empty fields, and
+      // the unreadable set carried through so the bytes are not deleted.
+      await hosts.saveSsh(
+        sampleSsh.copyWith(auth: SshAuthMethod.privateKey, name: '改名'),
+        secrets: const SshSecrets(unreadable: {SshSecretField.privateKey, SshSecretField.passphrase}),
+      );
+
+      expect(secrets.values, stored, reason: 'an unreadable secret must not be deleted by an unrelated save');
+      expect(c.read(hostsProvider).sshById(sampleSsh.id)!.name, '改名');
+    });
+
+    test('retyping the secret replaces it and clears the unreadable mark', () async {
+      final c = container();
+      await loaded(c);
+      final hosts = c.read(hostsProvider.notifier);
+      await hosts.saveSsh(
+        sampleSsh.copyWith(auth: SshAuthMethod.privateKey),
+        secrets: const SshSecrets(privateKey: '-----BEGIN OLD-----'),
+      );
+
+      await hosts.saveSsh(
+        sampleSsh.copyWith(auth: SshAuthMethod.privateKey),
+        secrets: const SshSecrets(privateKey: '-----BEGIN NEW-----'),
+      );
+
+      final loadedSecrets = await hosts.loadSecrets(sampleSsh.id);
+      expect(loadedSecrets.privateKey, '-----BEGIN NEW-----');
+      expect(loadedSecrets.unreadable, isEmpty);
+    });
   });
 
   group('active host', () {
