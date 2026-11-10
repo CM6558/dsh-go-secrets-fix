@@ -146,9 +146,10 @@ jobs:
           NODE_VERSION: ${{ env.NODE_VERSION }}
           PNPM_VERSION: ${{ env.PNPM_VERSION }}
         run: |
-          # build-runtime.sh takes no argument for "both ABIs".
+          # build-runtime.sh names the ABIs arm64-v8a / x86_64 and takes no
+          # argument for "both".
           case "${{ inputs.flavor || 'arm64' }}" in
-            arm64) ./runtime/build-runtime.sh arm64 ;;
+            arm64) ./runtime/build-runtime.sh arm64-v8a ;;
             x64) ./runtime/build-runtime.sh x86_64 ;;
             all) ./runtime/build-runtime.sh ;;
             *) echo "unknown flavor" >&2 ; exit 1 ;;
