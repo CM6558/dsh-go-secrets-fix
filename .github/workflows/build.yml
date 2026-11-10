@@ -76,6 +76,23 @@ jobs:
           channel: stable
           cache: true
 
+      # The widget tests load Noto Sans CJK from /usr/share/fonts/noto-cjk
+      # (app/test/support/test_fonts.dart). Runner images don't ship it, and a
+      # missing font fails the whole suite at load time.
+      # Ubuntu's fonts-noto-cjk installs into opentype/noto, not the
+      # /usr/share/fonts/noto-cjk the harness defaults to; point it there and
+      # check the three faces it asks for are really present.
+      - name: test fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          dir=/usr/share/fonts/opentype/noto
+          ls -la "$dir" | head
+          for f in NotoSansCJK-Light.ttc NotoSansCJK-Regular.ttc NotoSansCJK-Bold.ttc; do
+            test -f "$dir/$f" || { echo "missing $dir/$f"; exit 1; }
+          done
+          echo "DSH_TEST_FONT_DIR=$dir" >> "$GITHUB_ENV"
+
       - name: pub get
         working-directory: app
         run: flutter pub get
