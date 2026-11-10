@@ -36,6 +36,11 @@ on:
         description: 'Override the versionCode (build minute). Leave empty for the build minute.'
         required: false
         default: ''
+      bundled_runtime:
+        description: 'Bundle the on-phone Linux runtime (needed only for the local engine; SSH-only use can skip it and save ~50 minutes)'
+        required: true
+        default: false
+        type: boolean
   push:
     tags: ['v*']
   pull_request:
@@ -118,6 +123,10 @@ jobs:
   # which app/android/app/build.gradle.kts reads as extra assets/jniLibs.
   runtime:
     name: runtime ${{ inputs.flavor || 'arm64' }}
+    # The bundled runtime only powers the local engine (proot + Ubuntu + Node).
+    # A build used over SSH doesn't need it; without it the APK is ~180 MB
+    # smaller and the build is ~50 minutes shorter.
+    if: ${{ inputs.bundled_runtime }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     needs: checks
@@ -169,7 +178,9 @@ jobs:
     name: apk ${{ inputs.flavor || 'arm64' }} (${{ inputs.mode || 'release' }})
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    needs: runtime
+    # Runs even when `runtime` was skipped, which is the SSH-only build.
+    if: ${{ !cancelled() && needs.checks.result == 'success' }}
+    needs: [checks, runtime]
     steps:
       - uses: actions/checkout@v4
 
@@ -185,9 +196,17 @@ jobs:
           cache: true
 
       - uses: actions/download-artifact@v4
+        if: ${{ inputs.bundled_runtime }}
         with:
           name: runtime-out
           path: runtime/out
+
+      - name: no bundled runtime
+        if: ${{ !inputs.bundled_runtime }}
+        run: |
+          echo "Building without the bundled Linux runtime (SSH-only)."
+          echo "The local engine will report itself unavailable; SSH and DSH Remote are unaffected."
+          mkdir -p runtime/out
 
       - name: android sdk components
         run: |
