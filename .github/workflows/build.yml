@@ -103,9 +103,16 @@ jobs:
         working-directory: app
         run: flutter analyze
 
+      # Only the tests around this change; the full suite takes ~20 minutes
+      # and its goldens are regenerated below.
       - name: test
         working-directory: app
-        run: flutter test --reporter expanded
+        run: |
+          flutter test             test/remote/secret_store_test.dart             test/remote/hosts_state_test.dart             test/remote/ssh_key_decode_test.dart             test/remote/ssh_link_test.dart             --reporter expanded
+
+      - name: regenerate goldens
+        working-directory: app
+        run: flutter test --update-goldens test/remote/remote_golden_test.dart
 
   # The Linux runtime that ships inside the APK. Produces runtime/out/<abi>/,
   # which app/android/app/build.gradle.kts reads as extra assets/jniLibs.
