@@ -1,6 +1,0 @@
-{
-  "layered-image": {
-    "background": "$media:shortcut_background",
-    "foreground": "$media:shortcut_voice_foreground"
-  }
-}
