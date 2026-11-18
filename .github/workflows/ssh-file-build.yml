@@ -134,10 +134,18 @@ jobs:
           ndk=$(grep -oE 'ndkVersion[^"]*"[0-9.]+"' "$ext" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           compile_sdk=$(grep -oE 'compileSdkVersion[^0-9]*[0-9]+' "$ext" | grep -oE '[0-9]+$' | head -1)
           echo "compileSdk=$compile_sdk ndk=$ndk"
-          yes | sdkmanager --licenses >/dev/null || true
+          # The runner ships cmdline-tools outside PATH (tooling/setup-toolchain.sh
+          # fetches its own copy on devices), so find the binary instead of
+          # assuming `sdkmanager` resolves.
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(find "$sdk_root" -type f -name sdkmanager -print -quit)"
+          [ -x "$sdkmanager" ] || { echo "::error::no sdkmanager under $sdk_root"; exit 1; }
+          echo "sdkmanager=$sdkmanager"
+          yes | "$sdkmanager" --sdk_root="$sdk_root" --licenses >/dev/null || true
           pkgs=("platform-tools" "platforms;android-${compile_sdk:-36}" "build-tools;${compile_sdk:-36}.0.0")
           [ -n "$ndk" ] && pkgs+=("ndk;$ndk")
-          sdkmanager "${pkgs[@]}"
+          "$sdkmanager" --sdk_root="$sdk_root" "${pkgs[@]}"
 
       - name: pub get
         working-directory: app
