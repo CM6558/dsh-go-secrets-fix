@@ -1,0 +1,336 @@
+# SSH-only arm64 APK, built on demand from the GitHub UI.
+#
+# Why a separate workflow: the phone-side checkout can't build (no Linux/x86_64
+# Flutter host), and the local engine's runtime bundle (runtime/build-runtime.sh)
+# needs an x86_64 host and ~50 minutes. A build used over SSH needs neither, so
+# this one skips the bundle entirely and only does the app + the Flutter/Android
+# toolchain.
+#
+# It is deliberately manual-only: no push/pull_request trigger, so a fork does
+# not run the upstream CI matrix on every commit. `ci.yml` stays the CI of
+# record for PRs.
+#
+# What it does NOT do: goldens (they need Noto Color Emoji 2.051, see ci.yml),
+# the full test suite (three shards in ci.yml), the runtime bundle, and the
+# tawcroot library (tooling/build-apk.sh builds it; the tawcroot launch option
+# is simply unavailable in this APK).
+#
+# Signing is mandatory for release builds: a debug-signed APK cannot install
+# over an existing install (docs/release.md「签名」), so the job fails instead of
+# silently falling back to the debug key. Two sources, in this order:
+#   1. repository secrets — the path to take for anything that leaves this machine:
+#        DSHGO_KEYSTORE_BASE64   base64 -w0 of the .jks/.keystore
+#        DSHGO_KEYSTORE_PASSWORD storePassword
+#        DSHGO_KEY_ALIAS         keyAlias
+#        DSHGO_KEY_PASSWORD      keyPassword
+#        DSHGO_CERT_SHA256       optional: pin the signer's certificate SHA-256
+#                                (apksigner --print-certs), as docs/release.md
+#                                step 3 asks for at release time.
+#   2. signing/dshgo-fix.jks + signing/.storepass committed in the repository.
+#      That key is a PUBLIC TEST IDENTITY: its password is in the repo and anyone
+#      can sign with it. It exists so a build can be produced without repository
+#      secrets (Termux can't write them), and is only good for verifying builds
+#      on the maintainer's own device. Replace it with the secrets above, or
+#      generate a fresh key, before any distribution — and never publish a
+#      release built from it.
+
+name: SSH-only APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'release (signed with the release key) or debug (smoke test only, debug key)'
+        required: true
+        default: release
+        type: choice
+        options: [release, debug]
+      upload_release:
+        description: 'Attach the APK + SHA256SUMS to the v<versionName> GitHub Release (draft; false = artifact only)'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ssh-file-build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Same pins as .github/workflows/ci.yml:21-23 and tooling/setup-toolchain.sh:9-12.
+  FLUTTER_VERSION: 3.47.7
+  GRADLE_VERSION: 9.3.1
+  # app/test/support/test_fonts.dart:56 reads DSH_TEST_FONT_DIR; Ubuntu's CJK
+  # packages install into opentype/noto, not the /usr/share/fonts/noto-cjk default.
+  DSH_TEST_FONT_DIR: /usr/share/fonts/opentype/noto
+  # The Aliyun mirrors are slow and unreliable from a US runner (ci.yml:305).
+  DSH_MAVEN_MIRRORS: 0
+  TZ: Asia/Shanghai
+
+jobs:
+  apk:
+    name: arm64 ${{ inputs.build_type }} APK (no bundled runtime)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write # attach to a Release when upload_release is set
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: JDK 17
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # app/android/gradlew is not tracked, so Gradle comes from here (ci.yml:314).
+      - name: Gradle ${{ env.GRADLE_VERSION }}
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      # Pub cache; Gradle's comes from setup-gradle above.
+      - name: Restore the pub cache
+        id: pub-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('app/pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      # app/test/flutter_test_config.dart runs loadTestFonts() for every test
+      # file, and test_fonts.dart:48-71 throws on a missing face: Noto Sans CJK
+      # Regular + Bold, and the w300 Light face that only fonts-noto-cjk-extra
+      # carries (ci.yml:152-157). So the fonts are needed even without goldens.
+      - name: Test fonts (Noto Sans CJK, Light included)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk fonts-noto-cjk-extra
+          for f in NotoSansCJK-Light.ttc NotoSansCJK-Regular.ttc NotoSansCJK-Bold.ttc; do
+            test -f "$DSH_TEST_FONT_DIR/$f" || { echo "::error::missing $DSH_TEST_FONT_DIR/$f"; exit 1; }
+          done
+          ls -l "$DSH_TEST_FONT_DIR"/NotoSansCJK-*.ttc
+
+      # Same derivation as tooling/setup-toolchain.sh:95-102: read compileSdk and
+      # NDK from the Flutter SDK that is installed, instead of pinning versions
+      # that this Flutter release may not ship.
+      - name: Android SDK packages
+        run: |
+          set -euo pipefail
+          ext=$(find "$FLUTTER_ROOT/packages/flutter_tools/gradle/src/main" -name 'FlutterExtension.*' -print -quit)
+          ndk=$(grep -oE 'ndkVersion[^"]*"[0-9.]+"' "$ext" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          compile_sdk=$(grep -oE 'compileSdkVersion[^0-9]*[0-9]+' "$ext" | grep -oE '[0-9]+$' | head -1)
+          echo "compileSdk=$compile_sdk ndk=$ndk"
+          yes | sdkmanager --licenses >/dev/null || true
+          pkgs=("platform-tools" "platforms;android-${compile_sdk:-36}" "build-tools;${compile_sdk:-36}.0.0")
+          [ -n "$ndk" ] && pkgs+=("ndk;$ndk")
+          sdkmanager "${pkgs[@]}"
+
+      - name: pub get
+        working-directory: app
+        run: flutter pub get --enforce-lockfile
+
+      - name: Save the pub cache
+        if: steps.pub-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.pub-cache
+          key: ${{ steps.pub-cache.outputs.cache-primary-key }}
+
+      # The l10n class is generated from lib/l10n/app_*.arb (l10n.yaml output-dir),
+      # and this branch adds a string. `flutter pub get` with `generate: true`
+      # usually refreshes it, but the committed lib/l10n/gen/ can lag behind an
+      # arb edit made off-device, so generate explicitly before analyzing.
+      - name: Generate localizations
+        working-directory: app
+        run: flutter gen-l10n
+
+      # ci.yml:180-183 analyzes everything on shard 0; the whole app is small
+      # enough that narrowing it would hide more than it saves.
+      - name: Analyze
+        working-directory: app
+        run: flutter analyze --no-pub
+
+      # Only the files around the SSH/secret-storage surface. Missing paths are
+      # skipped with a warning rather than failing: this workflow must survive a
+      # rename upstream. Goldens are deliberately not a gate here.
+      - name: Targeted tests
+        working-directory: app
+        run: |
+          set -euo pipefail
+          targets=(test/secrets test/remote/hosts_state_test.dart test/remote/ssh_secret_load_edits_test.dart)
+          run=()
+          for t in "${targets[@]}"; do
+            if [ -e "$t" ]; then run+=("$t"); else echo "::warning::skipping missing $t"; fi
+          done
+          [ ${#run[@]} -gt 0 ] || { echo "::error::none of the target tests exist"; exit 1; }
+          flutter test --no-pub --concurrency=2 --reporter github "${run[@]}"
+
+      # build.gradle.kts:111-138 reads app/android/key.properties and only then
+      # creates the release signing config; without it the release build falls
+      # back to the debug key (build.gradle.kts:130-134). Fail loudly instead.
+      # Secrets win; the repo's test identity is the fallback; neither = stop.
+      - name: Release keystore
+        if: inputs.build_type == 'release'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.DSHGO_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.DSHGO_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.DSHGO_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.DSHGO_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          keystore="$RUNNER_TEMP/dshgo-release.keystore"
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            missing=()
+            for v in STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+              [ -n "${!v:-}" ] || missing+=("$v")
+            done
+            if [ ${#missing[@]} -gt 0 ]; then
+              echo "::error::DSHGO_KEYSTORE_BASE64 is set but ${missing[*]} (DSHGO_*) is not; refusing to guess the keystore password."
+              exit 1
+            fi
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keystore"
+            signing_source=secrets
+          elif [ -f signing/dshgo-fix.jks ] && [ -f signing/.storepass ]; then
+            # Copied out of the worktree so the cleanup step never touches the
+            # tracked file.
+            cp signing/dshgo-fix.jks "$keystore"
+            STORE_PASSWORD=$(head -n 1 signing/.storepass | tr -d '\r\n')
+            KEY_ALIAS=dshgo-fix
+            KEY_PASSWORD=$STORE_PASSWORD
+            signing_source=repo
+            echo "::warning::signing with the repository's public test identity (signing/dshgo-fix.jks); configure DSHGO_KEYSTORE_* before distributing anything"
+          else
+            echo "::error::no release signing key: set the DSHGO_KEYSTORE_BASE64 secret, or commit signing/dshgo-fix.jks + signing/.storepass. Refusing to build a debug-signed APK."
+            exit 1
+          fi
+          [ -s "$keystore" ] || { echo "::error::keystore at $keystore is empty"; exit 1; }
+          # Absolute storeFile: the signing config resolves relative paths against
+          # app/android/app, which is not where the keystore lands.
+          cat > app/android/key.properties <<EOF
+          storeFile=$keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          echo "SIGNING_SOURCE=$signing_source" >> "$GITHUB_ENV"
+
+      # Not tooling/build-apk.sh: in release mode it runs
+      # tooling/check_runtime_bundle.py (build-apk.sh:148-150), which requires
+      # runtime/out — exactly what an SSH-only build does without. Its remaining
+      # checks (JNI classes, versionCode read-back, version name) are repeated
+      # below, and the versionCode comes from the same script (build_number.py).
+      - name: Build arm64 ${{ inputs.build_type }} APK
+        working-directory: app
+        run: |
+          set -euo pipefail
+          # A leftover bundle would be packaged silently and make the "SSH-only"
+          # claim false (build.gradle.kts:79-85 adds runtime/out as assets/jniLibs).
+          if [ -e ../runtime/out ]; then
+            echo "::error::runtime/out exists; this workflow builds without the bundled runtime"
+            exit 1
+          fi
+          [ ! -e pubspec_overrides.yaml ] || { echo "::error::app/pubspec_overrides.yaml left over from a HarmonyOS build"; exit 1; }
+          name=$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' pubspec.yaml)
+          code=$(python3 ../tooling/build_number.py)
+          printf 'sdk.dir=%s\nflutter.sdk=%s\n' "$ANDROID_HOME" "$FLUTTER_ROOT" > android/local.properties
+          echo "APP_VERSION_NAME=$name" >> "$GITHUB_ENV"
+          echo "APP_VERSION_CODE=$code" >> "$GITHUB_ENV"
+          echo "dsh-go $name ($code) · ${{ inputs.build_type }} · arm64 · no bundled runtime"
+          flutter build apk --${{ inputs.build_type }} --flavor arm64 --target-platform android-arm64 \
+            --build-name "$name" --build-number "$code" --dart-define=DSH_APP_VERSION="$name+$code"
+
+      # Same gates tooling/build-apk.sh applies after a build, plus the certificate
+      # check docs/release.md「签名」step 3 requires before publishing.
+      - name: Verify signature and version
+        if: inputs.build_type == 'release'
+        env:
+          CERT_SHA256: ${{ secrets.DSHGO_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          apk="app/build/app/outputs/flutter-apk/app-arm64-release.apk"
+          test -f "$apk" || { echo "::error::no APK at $apk"; exit 1; }
+          sdk=${ANDROID_HOME:-$ANDROID_SDK_ROOT}
+          apksigner=$(ls -1d "$sdk"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          aapt2=$(ls -1d "$sdk"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)
+          out=$("$apksigner" verify -v --min-sdk-version 21 --print-certs "$apk")
+          echo "$out"
+          if grep -q 'CN=Android Debug' <<<"$out"; then
+            echo "::error::APK is signed with the debug key; it cannot install over an existing release install"
+            exit 1
+          fi
+          for s in 'v1 scheme' 'v2 scheme' 'v3 scheme'; do
+            grep -q "Verified using $s.*: true" <<<"$out" || { echo "::error::$s signature missing"; exit 1; }
+          done
+          # Colons, case and whitespace differ between keytool, apksigner and
+          # whatever was pasted into the secret; compare the hex only.
+          norm() { tr -d ':[:space:]' <<<"$1" | tr 'A-F' 'a-f'; }
+          expected=${CERT_SHA256:-}
+          if [ -z "$expected" ] && [ "$SIGNING_SOURCE" = repo ]; then
+            # The committed test identity, so a repo-key build is still checked.
+            expected=120f4cdff65949ec1c8b6c7483db14ac7b455659289164a17335fcc71268f584
+          fi
+          if [ -n "$expected" ]; then
+            got=$(sed -n 's/.*certificate SHA-256 digest: //p' <<<"$out" | head -1)
+            [ "$(norm "$got")" = "$(norm "$expected")" ] \
+              || { echo "::error::signer certificate $got is not the expected $expected"; exit 1; }
+            echo "signer certificate matches $expected"
+          else
+            echo "::warning::DSHGO_CERT_SHA256 is not set; the signer certificate was not compared with the published one"
+          fi
+          badge=$("$aapt2" dump badging "$apk" | sed -n '/^package:/p')
+          [[ $badge == *"versionCode='$APP_VERSION_CODE'"* && $badge == *"versionName='$APP_VERSION_NAME'"* ]] \
+            || { echo "::error::APK says $badge; expected versionName '$APP_VERSION_NAME' versionCode '$APP_VERSION_CODE'"; exit 1; }
+          python3 tooling/check_apk_jni.py "$apk"
+
+      - name: Collect dist
+        run: |
+          set -euo pipefail
+          apk="app/build/app/outputs/flutter-apk/app-arm64-${{ inputs.build_type }}.apk"
+          test -f "$apk" || { echo "::error::no APK at $apk"; exit 1; }
+          mkdir -p dist
+          cp "$apk" "dist/dsh-go-${APP_VERSION_NAME}-arm64.apk"
+          (cd dist && sha256sum ./*.apk > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: Upload APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: apk-arm64-${{ inputs.build_type }}
+          path: dist
+          retention-days: 14
+          if-no-files-found: error
+
+      # Draft on purpose: publishing a release flips `releases/latest` for every
+      # installed app (docs/release.md:303), and this APK has no bundled runtime.
+      - name: Attach to the version release
+        if: inputs.upload_release && inputs.build_type == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="v$APP_VERSION_NAME"
+          gh release view "$tag" >/dev/null 2>&1 || \
+            gh release create "$tag" --draft --title "DSH Go $APP_VERSION_NAME" \
+              --notes "Built from $GITHUB_SHA by ssh-file-build.yml. SSH-only APK: no bundled runtime (the local engine reports itself unavailable; SSH and DSH Remote are unaffected)."
+          gh release upload "$tag" dist/*.apk dist/SHA256SUMS --clobber
+
+      # Only the copies this job made: signing/dshgo-fix.jks is tracked when the
+      # fallback path is used and must survive, or the worktree goes dirty.
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/dshgo-release.keystore" app/android/key.properties
