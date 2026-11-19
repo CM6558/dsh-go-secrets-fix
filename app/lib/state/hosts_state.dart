@@ -198,6 +198,8 @@ class HostsController extends Notifier<HostsState> {
   }
 
   Future<SshSecrets> loadSecrets(String id) async {
+    // ignore: avoid_print
+    print('[DSHDBG] loadSecrets($id) enter');
     var unreadable = false;
     Future<String?> get(String key) async {
       try {
@@ -214,6 +216,9 @@ class HostsController extends Notifier<HostsState> {
     final privateKey = await get(SshSecrets.privateKeyKey(id));
     final passphrase = await get(SshSecrets.passphraseKey(id));
     final attachToken = await get(SshSecrets.attachTokenKey(id));
+    // ignore: avoid_print
+    print('[DSHDBG] loadSecrets($id) done unreadable=$unreadable '
+        'key=${privateKey != null} pw=${password != null}');
     return SshSecrets(
       password: password,
       privateKey: privateKey,

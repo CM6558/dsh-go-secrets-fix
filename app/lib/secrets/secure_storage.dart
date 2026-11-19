@@ -97,8 +97,15 @@ class AppSecureStorage {
 
   Future<String?> read({required String key}) async {
     if (_android) {
+      // ignore: avoid_print
+      print('[DSHDBG] read($key) android, awaiting migration');
       await _ensureMigrated();
-      return fileStore.read(key);
+      // ignore: avoid_print
+      print('[DSHDBG] read($key) migration done');
+      final value = await fileStore.read(key);
+      // ignore: avoid_print
+      print('[DSHDBG] read($key) -> ${value == null ? "null" : "${value.length}B"}');
+      return value;
     }
     if (!_ohos) return _fallback.read(key: key);
     final value = await _channel.invokeMethod<Object?>('read', {'key': key});

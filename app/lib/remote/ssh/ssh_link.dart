@@ -149,12 +149,18 @@ class SshHostLink implements HostLink {
 
   void _emit(HostLinkStatus next) {
     if (_closed && next.phase != HostLinkPhase.idle) return;
+    // ignore: avoid_print
+    print('[DSHDBG] emit ${next.phase}${next.step == null ? "" : " step=${next.step}"} '
+        'attempt=${next.attempt} err=${next.error?.kind} ${identityHashCode(this)}');
     _status = next;
     _statuses.add(next);
   }
 
   @override
   Future<DshClient> open() {
+    // ignore: avoid_print
+    print('[DSHDBG] open() closed=$_closed opening=${_opening != null} '
+        'phase=${_status.phase} ${identityHashCode(this)}');
     if (_closed) return Future.error(StateError('link closed'));
     final client = _client;
     if (client != null && _status.isConnected) return Future.value(client);
@@ -201,6 +207,8 @@ class SshHostLink implements HostLink {
   Future<DshClient> _connectOnce() async {
     final restart = _forceRestart;
     _forceRestart = false; // One explicit action authorizes only this attempt, even if SSH fails.
+    // ignore: avoid_print
+    print('[DSHDBG] _connectOnce start ${identityHashCode(this)}');
     var step = _status.withStep(HostLinkStep.connect);
     void at(HostLinkStep s, {String? detail}) {
       step = step.withStep(s, detail: detail);
@@ -208,7 +216,12 @@ class SshHostLink implements HostLink {
     }
 
     at(HostLinkStep.connect, detail: _config.address);
+    // ignore: avoid_print
+    print('[DSHDBG] loading secrets...');
     final secrets = await _loadSecrets();
+    // ignore: avoid_print
+    print('[DSHDBG] secrets loaded: key=${secrets.privateKey != null} '
+        'pw=${secrets.password != null} unreadable=${secrets.unreadable}');
     _checkOpen();
     final transport = await _transportFactory(SshConnectParams.of(_config, secrets), (key) async {
       if (_closed) return false;
