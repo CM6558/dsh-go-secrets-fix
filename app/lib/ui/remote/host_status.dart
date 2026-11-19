@@ -39,6 +39,11 @@ HostStatusView watchHostStatus(WidgetRef ref, HostRef host) {
     return HostStatusView(view.tone, view.label);
   }
   final status = ref.watch(hostLinkStatusProvider(host)).value ?? HostLinkStatus.idle;
+  final link = ref.watch(hostLinkProvider(host));
+  // ignore: avoid_print
+  print('[DSHDBG] watchHostStatus ${host.kind}:${host.id} phase=${status.phase} '
+      'step=${status.step} client=${link?.currentClient != null} link=${identityHashCode(link)} '
+      'err=${status.error?.kind}');
   return HostStatusView.ofLink(status);
 }
 

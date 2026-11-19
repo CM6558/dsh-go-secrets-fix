@@ -620,6 +620,8 @@ class SshHostLink implements HostLink {
 
   @override
   Future<void> close() async {
+    // ignore: avoid_print
+    print('[DSHDBG] close() phase=${_status.phase} step=${_status.step} ${identityHashCode(this)}');
     if (_closed) return;
     _emit(HostLinkStatus.idle);
     _closed = true;

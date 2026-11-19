@@ -240,6 +240,9 @@ final hostLinkProvider = Provider.autoDispose.family<HostLink?, HostRef>((ref, h
 /// Status of a host's link for the UI (idle for 本机).
 final hostLinkStatusProvider = StreamProvider.autoDispose.family<HostLinkStatus, HostRef>((ref, host) async* {
   final link = ref.watch(hostLinkProvider(host));
+  // ignore: avoid_print
+  print('[DSHDBG] statusProvider create ${host.kind}:${host.id} link=${identityHashCode(link)} '
+      'status=${link?.status.phase}/${link?.status.step}');
   if (link == null) {
     yield HostLinkStatus.idle;
     return;
